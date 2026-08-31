@@ -1,0 +1,26 @@
+# --- secrets · never commit these -----------------------------------
+.Renviron
+.Rprofile.local
+*.pem
+*.key
+
+# NOTE: app/static/pg_template.yml is intentionally NOT ignored - it only
+# holds !expr Sys.getenv(...) references, no literal credentials (see the
+# file's own header comment). Its actual DB credentials live in .Renviron
+# above, which stays ignored. If it is ever edited to hold a literal
+# password again, re-add it here before committing.
+
+# --- uploaded lab files ---------------------------------------------
+app/uploaded_files/
+
+# --- R session junk --------------------------------------------------
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+rsconnect/
+
+# --- renv: keep renv.lock (reproducibility manifest), not the library -
+renv/library/
+renv/staging/
+renv/local/

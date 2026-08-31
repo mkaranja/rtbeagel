@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RTB-EAGEL · Orders Flow — Redesign Preview</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#16241C; --ink-soft:#57685D; --ink-faint:#8B9A90;
+    --bg:#F4F7F2; --surface:#FFFFFF; --surface-alt:#EEF3EC;
+    --border:#DDE5D9; --border-soft:#E9EFE6;
+    --brand:#215A39; --brand-dark:#153B25; --brand-soft:#E3EEE6; --brand-line:#9CC1AB;
+    --amber:#A9711F; --amber-soft:#FBF0DD;
+    --teal:#1C6478; --teal-soft:#E3F0F3;
+    --red:#A23A32; --red-soft:#FAE9E6;
+    --shadow: 0 1px 2px rgba(21,34,24,.06), 0 10px 30px -16px rgba(21,34,24,.18);
+    --radius: 12px;
+  }
+  *{ box-sizing:border-box; }
+  body{ margin:0; background:var(--bg); color:var(--ink); font-family:'Inter',system-ui,sans-serif; font-size:14px; padding:26px; }
+  .mono{ font-family:'IBM Plex Mono',monospace; }
+  .wrap{ max-width:1180px; margin:0 auto; }
+  .switch{ display:flex; gap:6px; margin-bottom:22px; }
+  .switch button{ border:1px solid var(--border); background:var(--surface); padding:8px 16px; border-radius:8px; font-weight:600; font-size:13px; cursor:pointer; color:var(--ink-soft); }
+  .switch button.active{ background:var(--brand); border-color:var(--brand); color:#fff; }
+  .screen{ display:none; } .screen.active{ display:block; }
+
+  .page-head{ display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:16px; flex-wrap:wrap; }
+  .page-head h1{ font-family:'Fraunces',serif; font-weight:600; font-size:24px; margin:0 0 3px; }
+  .page-head p{ margin:0; color:var(--ink-soft); font-size:13.5px; }
+  .btn{ border-radius:9px; font-weight:600; font-size:13px; padding:9px 16px; border:1px solid transparent; cursor:pointer; display:inline-flex; align-items:center; gap:7px; }
+  .btn-success{ background:var(--brand); border-color:var(--brand); color:#fff; }
+  .btn-outline{ border-color:var(--border); color:var(--ink-soft); background:var(--surface); }
+  .btn-warning{ background:var(--amber); border-color:var(--amber); color:#fff; }
+  .btn-sm{ font-size:12px; padding:6px 11px; }
+
+  .stat-row{ display:flex; gap:12px; margin-bottom:16px; flex-wrap:wrap; }
+  .stat-tile{ flex:1; min-width:160px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); padding:13px 16px; border-left:3px solid var(--border); }
+  .stat-tile .n{ font-family:'Fraunces',serif; font-size:23px; font-weight:600; line-height:1.1; }
+  .stat-tile .l{ font-size:12px; color:var(--ink-soft); margin-top:2px; }
+  .stat-tile.brand{ border-left-color:var(--brand); } .stat-tile.brand .n{ color:var(--brand); }
+  .stat-tile.amber{ border-left-color:var(--amber); } .stat-tile.amber .n{ color:var(--amber); }
+  .stat-tile.teal{ border-left-color:var(--teal); } .stat-tile.teal .n{ color:var(--teal); }
+  .stat-tile.ink{ border-left-color:var(--ink-faint); } .stat-tile.ink .n{ color:var(--ink); }
+
+  .toolbar{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); padding:12px 16px; margin-bottom:14px; }
+  .pills{ display:flex; gap:6px; }
+  .pills button{ border:1px solid var(--border); background:var(--surface); padding:6px 13px; border-radius:8px; font-weight:600; font-size:12.5px; cursor:pointer; color:var(--ink-soft); }
+  .pills button.active{ background:var(--surface-alt); color:var(--brand); border-color:var(--brand-line); }
+  .search-wrap{ position:relative; } .search-wrap input{ padding:8px 11px 8px 32px; border:1px solid var(--border); border-radius:9px; min-width:230px; font-size:13px; }
+  .search-wrap .ico{ position:absolute; left:11px; top:9px; color:var(--ink-faint); }
+
+  .bulk-bar{ display:flex; align-items:center; justify-content:space-between; gap:12px; background:var(--amber-soft); border:1px solid var(--amber); border-radius:10px; padding:9px 14px; margin-bottom:12px; }
+  .bulk-bar .count{ font-weight:600; font-size:13px; color:var(--amber); }
+
+  .table-card{ background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); overflow:hidden; }
+  table{ width:100%; border-collapse:collapse; font-size:13px; }
+  thead th{ text-align:left; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-faint); padding:12px 14px; border-bottom:1px solid var(--border); background:var(--surface-alt); }
+  tbody td{ padding:12px 14px; border-bottom:1px solid var(--border-soft); }
+  tbody tr:last-child td{ border-bottom:none; }
+  .ocode{ font-weight:700; }
+
+  .chip{ display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:600; padding:3px 10px; border-radius:100px; white-space:nowrap; }
+  .chip .d{ width:6px; height:6px; border-radius:50%; background:currentColor; }
+  .chip.amber{ background:var(--amber-soft); color:var(--amber); }
+  .chip.brand{ background:var(--brand-soft); color:var(--brand-dark); }
+  .chip.teal{ background:var(--teal-soft); color:var(--teal); }
+  .chip.red{ background:var(--red-soft); color:var(--red); }
+  .chip.ink{ background:var(--surface-alt); color:var(--ink-soft); }
+
+  /* view order */
+  .record-head{ display:flex; align-items:center; justify-content:space-between; gap:16px; background:var(--surface); border:1px solid var(--border); border-left:5px solid var(--brand); border-radius:var(--radius); box-shadow:var(--shadow); padding:18px 22px; margin-bottom:18px; }
+  .record-head .code{ font-family:'Fraunces',serif; font-weight:600; font-size:26px; }
+  .record-head .code small{ display:block; font-family:'Inter',sans-serif; font-weight:500; font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-faint); margin-bottom:2px; }
+
+  .section{ background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); margin-bottom:16px; overflow:hidden; }
+  .section-head{ display:flex; align-items:center; gap:10px; padding:13px 18px; border-bottom:1px solid var(--border-soft); background:var(--surface-alt); }
+  .section-head .idx{ width:24px; height:24px; border-radius:7px; flex:none; display:flex; align-items:center; justify-content:center; background:var(--brand); color:#fff; font-size:12px; font-weight:700; font-family:'IBM Plex Mono',monospace; }
+  .section-head .ttl{ font-family:'Fraunces',serif; font-weight:600; font-size:14.5px; }
+  .section-body{ padding:16px 18px; }
+  .accent-teal .section-head{ background:var(--teal-soft); } .accent-teal .section-head .idx{ background:var(--teal); }
+  .accent-amber .section-head{ background:var(--amber-soft); } .accent-amber .section-head .idx{ background:var(--amber); }
+  .subhead{ font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-faint); margin:12px 0 10px; padding-bottom:6px; border-bottom:1px solid var(--border-soft); }
+  .prop{ display:flex; padding:9px 0; border-bottom:1px solid var(--border-soft); align-items:baseline; }
+  .prop:last-child{ border-bottom:none; }
+  .prop .k{ color:var(--ink-faint); font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; width:150px; flex-shrink:0; }
+  .prop .v{ font-weight:600; font-size:13.5px; padding-left:10px; }
+  .cols2{ display:grid; grid-template-columns:1fr 1fr; gap:0 24px; }
+  .grid-9{ display:grid; grid-template-columns:1fr 1fr; gap:0 16px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="switch">
+    <button class="active" onclick="show('cmd',this)">Command Center</button>
+    <button onclick="show('view',this)">View Order</button>
+    <button onclick="show('modals',this)">Review &amp; Update Modals</button>
+  </div>
+
+  <!-- COMMAND CENTER -->
+  <div class="screen active" id="cmd">
+    <div class="page-head">
+      <div><h1>Orders command center</h1><p>Manage incoming samples and monitor laboratory progress.</p></div>
+      <button class="btn btn-success">+ Register new order</button>
+    </div>
+
+    <div class="stat-row">
+      <div class="stat-tile ink"><div class="n">19</div><div class="l">Total orders</div></div>
+      <div class="stat-tile amber"><div class="n">5</div><div class="l">Pending approval</div></div>
+      <div class="stat-tile teal"><div class="n">11</div><div class="l">In progress</div></div>
+      <div class="stat-tile brand"><div class="n">3</div><div class="l">Completed</div></div>
+    </div>
+
+    <div class="toolbar">
+      <div class="pills">
+        <button class="active">All Orders</button><button>Pending Approval</button><button>In Progress</button><button>Completed</button>
+      </div>
+      <div class="search-wrap"><span class="ico">⌕</span><input placeholder="Search order code or customer..."></div>
+    </div>
+
+    <div class="bulk-bar">
+      <div class="count">2 orders selected</div>
+      <button class="btn btn-warning btn-sm">✓ Review selected — approve / reject</button>
+    </div>
+
+    <div class="table-card">
+      <table>
+        <thead><tr><th>Order number</th><th>Crop</th><th>Customer</th><th>Received</th><th>Status</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td class="ocode mono">PQS-2026-MAY-001</td><td>Cassava</td><td>International Potato Center</td><td>May 25, 2026</td><td><span class="chip teal"><span class="d"></span>In progress</span></td><td><button class="btn btn-outline btn-sm">Receipt</button> <button class="btn btn-outline btn-sm">View</button></td></tr>
+          <tr><td class="ocode mono">PQS-2026-APR-002</td><td>Cassava</td><td>IITA</td><td>Apr 08, 2026</td><td><span class="chip brand"><span class="d"></span>Approved</span></td><td><button class="btn btn-outline btn-sm">Receipt</button> <button class="btn btn-outline btn-sm">View</button></td></tr>
+          <tr><td class="ocode mono">PQS-2026-MAR-013</td><td>Cassava</td><td>IITA</td><td>Mar 24, 2026</td><td><span class="chip amber"><span class="d"></span>Pending approval</span></td><td><button class="btn btn-outline btn-sm">Receipt</button> <button class="btn btn-outline btn-sm">View</button></td></tr>
+          <tr><td class="ocode mono">PQS-2026-MAR-009</td><td>Cassava</td><td>IITA</td><td>Mar 24, 2026</td><td><span class="chip red"><span class="d"></span>Rejected</span></td><td><button class="btn btn-outline btn-sm">Receipt</button> <button class="btn btn-outline btn-sm">View</button></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- VIEW ORDER -->
+  <div class="screen" id="view">
+    <div class="record-head">
+      <div class="code"><small>Order</small>PQS-2026-MAY-001</div>
+      <button class="btn btn-success">🖶 Receipt</button>
+    </div>
+
+    <div class="grid-9">
+      <div style="grid-column:1 / -1;">
+        <div class="section">
+          <div class="section-head"><span class="idx">1</span><span class="ttl">General information</span></div>
+          <div class="section-body cols2">
+            <div><div class="prop"><span class="k">Customer</span><span class="v">International Potato Center</span></div><div class="prop"><span class="k">Report format</span><span class="v">All samples in one report</span></div></div>
+            <div><div class="prop"><span class="k">Number of samples</span><span class="v">1</span></div><div class="prop"><span class="k">Results dispatch</span><span class="v">Electronically</span></div></div>
+          </div>
+        </div>
+
+        <div class="section accent-amber">
+          <div class="section-head"><span class="idx">2</span><span class="ttl">Billing</span></div>
+          <div class="section-body" style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:0 24px;">
+            <div class="prop"><span class="k">Payment made</span><span class="v" style="color:var(--red)">NO</span></div>
+            <div class="prop"><span class="k">Amount charged</span><span class="v">Kes. NA</span></div>
+            <div class="prop"><span class="k">Receipt no</span><span class="v">—</span></div>
+          </div>
+        </div>
+
+        <div class="section accent-teal">
+          <div class="section-head"><span class="idx">3</span><span class="ttl">Sample details</span></div>
+          <div class="section-body">
+            <div class="cols2">
+              <div>
+                <div class="prop"><span class="k">Lot/ ref no</span><span class="v">GYH67</span></div>
+                <div class="prop"><span class="k">Sampled by</span><span class="v">Margaret</span></div>
+                <div class="prop"><span class="k">Date sampled</span><span class="v">2026-05-25</span></div>
+                <div class="prop"><span class="k">Date received</span><span class="v">2026-05-25</span></div>
+              </div>
+              <div>
+                <div class="prop"><span class="k">Crop</span><span class="v">CASSAVA</span></div>
+                <div class="prop"><span class="k">Variety</span><span class="v">CRI-AMPESI</span></div>
+                <div class="prop"><span class="k">Sample type</span><span class="v">cutting</span></div>
+                <div class="prop"><span class="k">Sample condition</span><span class="v">GOOD</span></div>
+              </div>
+            </div>
+            <div class="subhead">Sample description</div>
+            <div style="padding:12px; background:var(--surface-alt); border-radius:8px; border:1px solid var(--border);">Stem cuttings received in good condition for virus indexing.</div>
+          </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:0 16px;">
+          <div class="section">
+            <div class="section-head"><span class="idx">4</span><span class="ttl">Services requested</span></div>
+            <div class="section-body">
+              <div class="subhead">Active services</div>
+              <div style="display:flex; flex-direction:column; gap:6px;">
+                <span class="chip amber" style="width:fit-content"><span class="d"></span>Pathogen detection</span>
+                <span class="chip teal" style="width:fit-content"><span class="d"></span>In-vitro distribution: 10</span>
+              </div>
+              <div class="subhead">Test methods requested</div>
+              <ul style="padding-left:1rem; color:var(--ink-soft); margin:0;"><li>Cassava brown streak virus</li><li>Cassava mosaic virus</li></ul>
+            </div>
+          </div>
+          <div class="section">
+            <div class="section-head"><span class="idx">5</span><span class="ttl">Notes &amp; files</span></div>
+            <div class="section-body">
+              <div class="subhead">Additional info</div>
+              <div style="font-size:.85rem; color:var(--ink-soft); margin-bottom:20px;">Priority genotype for multi-locational trial.</div>
+              <div class="subhead">Attachments</div>
+              <div style="color:var(--ink-faint); font-size:12.5px;">receipt_PQS-2026-MAY-001.pdf</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- MODALS -->
+  <div class="screen" id="modals">
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; align-items:start;">
+      <!-- Review modal -->
+      <div>
+        <div class="subhead" style="margin-top:0;">Review &amp; approve (modal)</div>
+        <div class="section">
+          <div class="section-head"><span class="idx" style="font-family:inherit;">✓</span><span class="ttl">Review selected orders</span></div>
+          <div class="section-body">
+            <div class="subhead" style="margin-top:0;">Selected orders — uncheck to exclude</div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px;">
+              <span class="chip ink" style="cursor:pointer;">✕ PQS-2026-MAR-013</span>
+              <span class="chip ink" style="cursor:pointer;">✕ PQS-2026-MAR-012</span>
+            </div>
+            <label style="display:block; font-size:11.5px; font-weight:700; color:var(--ink-soft); text-transform:uppercase; margin-bottom:5px;">Bulk comment (applies to selected rows)</label>
+            <input style="width:100%; border:1px solid var(--border); border-radius:9px; padding:8px 11px; font-size:13px; margin-bottom:6px;" placeholder="Enter review comment...">
+            <div class="review-actionbar" style="border-top:1px solid var(--border-soft); padding-top:14px; margin-top:8px; display:flex; align-items:center; gap:12px;">
+              <div style="display:flex; gap:8px;"><button class="btn btn-outline" style="color:var(--brand); border-color:var(--brand-line);">Approve</button><button class="btn btn-outline" style="color:var(--red); border-color:var(--red-line,#E3ADA5);">Reject</button></div>
+              <div style="flex:1; text-align:center; font-weight:600; font-size:12.5px; color:var(--ink-soft);">2 items modified</div>
+              <div style="display:flex; gap:8px;"><button class="btn btn-outline">Cancel</button><button class="btn btn-success">Submit decisions</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Update modal -->
+      <div>
+        <div class="subhead" style="margin-top:0;">Update status (modal)</div>
+        <div class="section">
+          <div class="section-head"><span class="idx" style="font-family:inherit;">⚙</span><span class="ttl">Update project status</span></div>
+          <div class="section-body">
+            <label style="display:block; font-size:11.5px; font-weight:700; color:var(--ink-soft); text-transform:uppercase; margin-bottom:5px;">Project code</label>
+            <input class="mono" value="PQS-2026-MAR-013" disabled style="width:100%; border:1px solid var(--border); border-radius:9px; padding:8px 11px; background:var(--surface-alt); color:var(--ink-faint); margin-bottom:14px;">
+            <label style="display:block; font-size:11.5px; font-weight:700; color:var(--ink-soft); text-transform:uppercase; margin-bottom:5px;">Current status</label>
+            <input value="Logged" disabled style="width:100%; border:1px solid var(--border); border-radius:9px; padding:8px 11px; background:var(--surface-alt); color:var(--ink-faint); margin-bottom:14px;">
+            <div style="background:var(--amber-soft); color:var(--amber); border:1px solid var(--amber); padding:11px 13px; border-radius:9px; font-size:13px; margin-bottom:14px;">Approve to route into Quarantine Glasshouse →</div>
+            <label style="display:block; font-size:11.5px; font-weight:700; color:var(--ink-soft); text-transform:uppercase; margin-bottom:5px;">Status notes</label>
+            <textarea rows="3" style="width:100%; border:1px solid var(--border); border-radius:9px; padding:8px 11px; font-size:13px;" placeholder="Add comments..."></textarea>
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding-top:14px; margin-top:8px; border-top:1px solid var(--border-soft);">
+              <small style="font-size:11px; color:var(--ink-faint);">* Required fields</small>
+              <div style="display:flex; gap:8px;"><button class="btn btn-outline">Cancel</button><button class="btn btn-success">✓ Update</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+<script>
+function show(id, btn){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.toggle('active', s.id===id));
+  document.querySelectorAll('.switch button').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+}
+</script>
+</body>
+</html>

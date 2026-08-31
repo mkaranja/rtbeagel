@@ -1,0 +1,2797 @@
+--
+-- PostgreSQL database dump
+--
+
+\restrict COOrN7IE1x4UcqgITIfqWCgk7KdzJTi6yoRqdV0Mqq0Qib1iOYxQYGrvXZIOk6c
+
+-- Dumped from database version 16.3
+-- Dumped by pg_dump version 18.3 (Ubuntu 18.3-1.pgdg22.04+1)
+
+-- Started on 2026-07-17 19:46:38 EAT
+
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET idle_in_transaction_session_timeout = 0;
+SET transaction_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SELECT pg_catalog.set_config('search_path', '', false);
+SET check_function_bodies = false;
+SET xmloption = content;
+SET client_min_messages = warning;
+SET row_security = off;
+
+--
+-- TOC entry 282 (class 1255 OID 24193)
+-- Name: ensure_app_user(text, boolean); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.ensure_app_user(p_username text, p_admin boolean DEFAULT false) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    INSERT INTO tbl_app_user (username, role)
+    VALUES (p_username, CASE WHEN p_admin THEN 'admin' ELSE 'technician' END)
+    ON CONFLICT (username) DO NOTHING;
+END; $$;
+
+
+ALTER FUNCTION public.ensure_app_user(p_username text, p_admin boolean) OWNER TO postgres;
+
+--
+-- TOC entry 283 (class 1255 OID 24203)
+-- Name: next_order_number(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.next_order_number() RETURNS text
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_yr  int := EXTRACT(year  FROM CURRENT_DATE)::int;
+    v_mon int := EXTRACT(month FROM CURRENT_DATE)::int;
+    v_seq int;
+BEGIN
+    INSERT INTO tbl_code_counter AS c (scope, yr, mon, last_seq)
+    VALUES ('order', v_yr, v_mon, 1)
+    ON CONFLICT (scope, yr, mon) DO UPDATE SET last_seq = c.last_seq + 1
+    RETURNING last_seq INTO v_seq;
+
+    RETURN format('PQS-%s-%s-%s', v_yr,
+                  upper(to_char(CURRENT_DATE,'Mon')), lpad(v_seq::text,3,'0'));
+END; $$;
+
+
+ALTER FUNCTION public.next_order_number() OWNER TO postgres;
+
+--
+-- TOC entry 285 (class 1255 OID 24205)
+-- Name: next_sample_code(text); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.next_sample_code(p_prefix text) RETURNS text
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_yr  int := EXTRACT(year FROM CURRENT_DATE)::int;
+    v_seq int;
+BEGIN
+    INSERT INTO tbl_code_counter AS c (scope, yr, mon, last_seq)
+    VALUES (p_prefix, v_yr, 0, 1)
+    ON CONFLICT (scope, yr, mon) DO UPDATE SET last_seq = c.last_seq + 1
+    RETURNING last_seq INTO v_seq;
+
+    RETURN format('%s%s%s', p_prefix,
+                  to_char(CURRENT_DATE,'YY'), lpad(v_seq::text,3,'0'));
+END; $$;
+
+
+ALTER FUNCTION public.next_sample_code(p_prefix text) OWNER TO postgres;
+
+--
+-- TOC entry 284 (class 1255 OID 24204)
+-- Name: peek_order_number(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.peek_order_number() RETURNS text
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_yr  int := EXTRACT(year  FROM CURRENT_DATE)::int;
+    v_mon int := EXTRACT(month FROM CURRENT_DATE)::int;
+    v_seq int;
+BEGIN
+    SELECT COALESCE(last_seq,0)+1 INTO v_seq
+    FROM tbl_code_counter WHERE scope='order' AND yr=v_yr AND mon=v_mon;
+    RETURN format('PQS-%s-%s-%s', v_yr,
+                  upper(to_char(CURRENT_DATE,'Mon')), lpad(COALESCE(v_seq,1)::text,3,'0'));
+END; $$;
+
+
+ALTER FUNCTION public.peek_order_number() OWNER TO postgres;
+
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
+
+--
+-- TOC entry 258 (class 1259 OID 24541)
+-- Name: tbl_activity_log; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_activity_log (
+    log_id bigint NOT NULL,
+    username text,
+    module text,
+    action text NOT NULL,
+    subject text,
+    detail jsonb,
+    occurred_on timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+ALTER TABLE public.tbl_activity_log OWNER TO postgres;
+
+--
+-- TOC entry 257 (class 1259 OID 24540)
+-- Name: tbl_activity_log_log_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.tbl_activity_log ALTER COLUMN log_id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.tbl_activity_log_log_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- TOC entry 237 (class 1259 OID 24177)
+-- Name: tbl_app_user; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_app_user (
+    username text NOT NULL,
+    full_name text,
+    email text,
+    role text DEFAULT 'technician'::text NOT NULL,
+    laboratory_id integer,
+    active boolean DEFAULT true NOT NULL,
+    first_seen timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT tbl_app_user_role_check CHECK ((role = ANY (ARRAY['admin'::text, 'manager'::text, 'technician'::text, 'reviewer'::text, 'viewer'::text])))
+);
+
+
+ALTER TABLE public.tbl_app_user OWNER TO postgres;
+
+--
+-- TOC entry 238 (class 1259 OID 24194)
+-- Name: tbl_code_counter; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_code_counter (
+    scope text NOT NULL,
+    yr integer NOT NULL,
+    mon integer DEFAULT 0 NOT NULL,
+    last_seq integer DEFAULT 0 NOT NULL
+);
+
+
+ALTER TABLE public.tbl_code_counter OWNER TO postgres;
+
+--
+-- TOC entry 264 (class 1259 OID 24613)
+-- Name: tbl_conservation_detail; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_conservation_detail (
+    sample_code text NOT NULL,
+    storage_location text NOT NULL,
+    conserved_on date DEFAULT CURRENT_DATE NOT NULL
+);
+
+
+ALTER TABLE public.tbl_conservation_detail OWNER TO postgres;
+
+--
+-- TOC entry 268 (class 1259 OID 24642)
+-- Name: tbl_country; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_country (
+    country_code character(2) NOT NULL,
+    country_name text NOT NULL,
+    active boolean DEFAULT true NOT NULL
+);
+
+
+ALTER TABLE public.tbl_country OWNER TO postgres;
+
+--
+-- TOC entry 218 (class 1259 OID 24006)
+-- Name: tbl_crop; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_crop (
+    crop_id integer NOT NULL,
+    crop_name text NOT NULL,
+    scientific_name text,
+    family text,
+    active boolean DEFAULT true NOT NULL
+);
+
+
+ALTER TABLE public.tbl_crop OWNER TO postgres;
+
+--
+-- TOC entry 217 (class 1259 OID 24005)
+-- Name: tbl_crop_crop_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.tbl_crop ALTER COLUMN crop_id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.tbl_crop_crop_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- TOC entry 216 (class 1259 OID 23993)
+-- Name: tbl_customer; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_customer (
+    customer_id integer NOT NULL,
+    customer_name text NOT NULL,
+    customer_type text NOT NULL,
+    customer_category text NOT NULL,
+    group_name text,
+    description text,
+    address text,
+    alt_address text,
+    phone text,
+    email text,
+    active boolean DEFAULT true NOT NULL,
+    created_on timestamp with time zone DEFAULT now() NOT NULL,
+    created_by text
+);
+
+
+ALTER TABLE public.tbl_customer OWNER TO postgres;
+
+--
+-- TOC entry 215 (class 1259 OID 23992)
+-- Name: tbl_customer_customer_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.tbl_customer ALTER COLUMN customer_id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.tbl_customer_customer_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- TOC entry 270 (class 1259 OID 24660)
+-- Name: tbl_dispatch_method; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_dispatch_method (
+    dispatch_code text NOT NULL,
+    label text NOT NULL,
+    sort_order integer DEFAULT 0 NOT NULL,
+    active boolean DEFAULT true NOT NULL
+);
+
+
+ALTER TABLE public.tbl_dispatch_method OWNER TO postgres;
+
+--
+-- TOC entry 256 (class 1259 OID 24514)
+-- Name: tbl_file; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_file (
+    file_id bigint NOT NULL,
+    order_number text,
+    sample_code text,
+    file_name text NOT NULL,
+    stored_path text NOT NULL,
+    mime_type text,
+    size_bytes bigint,
+    description text,
+    uploaded_by text,
+    uploaded_on timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT tbl_file_size_bytes_check CHECK ((size_bytes >= 0))
+);
+
+
+ALTER TABLE public.tbl_file OWNER TO postgres;
+
+--
+-- TOC entry 255 (class 1259 OID 24513)
+-- Name: tbl_file_file_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.tbl_file ALTER COLUMN file_id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.tbl_file_file_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- TOC entry 222 (class 1259 OID 24034)
+-- Name: tbl_laboratory; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_laboratory (
+    laboratory_id integer NOT NULL,
+    laboratory_name text NOT NULL,
+    description text,
+    active boolean DEFAULT true NOT NULL
+);
+
+
+ALTER TABLE public.tbl_laboratory OWNER TO postgres;
+
+--
+-- TOC entry 221 (class 1259 OID 24033)
+-- Name: tbl_laboratory_laboratory_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.tbl_laboratory ALTER COLUMN laboratory_id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.tbl_laboratory_laboratory_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- TOC entry 239 (class 1259 OID 24206)
+-- Name: tbl_order; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_order (
+    order_number text NOT NULL,
+    customer_id integer NOT NULL,
+    sample_amount integer NOT NULL,
+    amount_charged numeric(12,2),
+    receipt_no text,
+    payment_made boolean DEFAULT false NOT NULL,
+    approval_state text DEFAULT 'pending'::text NOT NULL,
+    approved_on timestamp with time zone,
+    approved_by text,
+    created_by text,
+    created_on timestamp with time zone DEFAULT now() NOT NULL,
+    updated_on timestamp with time zone DEFAULT now() NOT NULL,
+    report_format_code text,
+    dispatch_code text,
+    parent_order_number text,
+    order_kind text DEFAULT 'primary'::text NOT NULL,
+    CONSTRAINT ck_billing_complete CHECK (((NOT payment_made) OR ((amount_charged IS NOT NULL) AND (receipt_no IS NOT NULL)))),
+    CONSTRAINT ck_continuation_has_parent CHECK (((order_kind <> 'continuation'::text) OR (parent_order_number IS NOT NULL))),
+    CONSTRAINT ck_parent_not_self CHECK ((parent_order_number IS DISTINCT FROM order_number)),
+    CONSTRAINT tbl_order_amount_charged_check CHECK ((amount_charged >= (0)::numeric)),
+    CONSTRAINT tbl_order_approval_state_check CHECK ((approval_state = ANY (ARRAY['pending'::text, 'approved'::text, 'rejected'::text, 'cancelled'::text]))),
+    CONSTRAINT tbl_order_order_kind_check CHECK ((order_kind = ANY (ARRAY['primary'::text, 'continuation'::text, 'repeat'::text]))),
+    CONSTRAINT tbl_order_sample_amount_check CHECK ((sample_amount > 0))
+);
+
+
+ALTER TABLE public.tbl_order OWNER TO postgres;
+
+--
+-- TOC entry 240 (class 1259 OID 24239)
+-- Name: tbl_order_detail; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_order_detail (
+    order_number text NOT NULL,
+    ref_no text,
+    sampler text,
+    date_sampled date,
+    date_received date,
+    crop_id integer,
+    variety_id integer,
+    sample_type_code text,
+    condition_code text,
+    part_id integer,
+    bag_id integer,
+    sample_description text,
+    additional_info text,
+    origin_country_code character(2),
+    CONSTRAINT ck_sampled_before_received CHECK (((date_sampled IS NULL) OR (date_received IS NULL) OR (date_sampled <= date_received)))
+);
+
+
+ALTER TABLE public.tbl_order_detail OWNER TO postgres;
+
+--
+-- TOC entry 242 (class 1259 OID 24284)
+-- Name: tbl_order_event; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_order_event (
+    event_id bigint NOT NULL,
+    order_number text NOT NULL,
+    module text,
+    action text NOT NULL,
+    occurred_on timestamp with time zone DEFAULT now() NOT NULL,
+    actor text,
+    notes text
+);
+
+
+ALTER TABLE public.tbl_order_event OWNER TO postgres;
+
+--
+-- TOC entry 241 (class 1259 OID 24283)
+-- Name: tbl_order_event_event_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.tbl_order_event ALTER COLUMN event_id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.tbl_order_event_event_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- TOC entry 262 (class 1259 OID 24571)
+-- Name: tbl_order_quarantine; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_order_quarantine (
+    order_number text NOT NULL,
+    stage_code text NOT NULL,
+    received_date date NOT NULL,
+    received_by text,
+    bench_no text,
+    quantity integer,
+    notes text,
+    CONSTRAINT ck_quarantine_stage CHECK ((stage_code = ANY (ARRAY['quarantine_glasshouse'::text, 'quarantine_growthroom'::text]))),
+    CONSTRAINT tbl_order_quarantine_quantity_check CHECK ((quantity > 0))
+);
+
+
+ALTER TABLE public.tbl_order_quarantine OWNER TO postgres;
+
+--
+-- TOC entry 245 (class 1259 OID 24322)
+-- Name: tbl_order_service; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_order_service (
+    order_service_id bigint NOT NULL,
+    order_number text NOT NULL,
+    service_code text NOT NULL,
+    target_qty integer NOT NULL,
+    purpose text,
+    origin text DEFAULT 'customer_order'::text NOT NULL,
+    recipient text,
+    requested_by text,
+    requested_on timestamp with time zone DEFAULT now() NOT NULL,
+    started_on timestamp with time zone,
+    cancelled_on timestamp with time zone,
+    cancel_reason text,
+    notes text,
+    from_disposition_id bigint,
+    CONSTRAINT tbl_order_service_origin_check CHECK ((origin = ANY (ARRAY['customer_order'::text, 'lab_initiated'::text]))),
+    CONSTRAINT tbl_order_service_target_qty_check CHECK ((target_qty > 0))
+);
+
+
+ALTER TABLE public.tbl_order_service OWNER TO postgres;
+
+--
+-- TOC entry 244 (class 1259 OID 24321)
+-- Name: tbl_order_service_order_service_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.tbl_order_service ALTER COLUMN order_service_id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.tbl_order_service_order_service_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- TOC entry 243 (class 1259 OID 24303)
+-- Name: tbl_order_test; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_order_test (
+    order_number text NOT NULL,
+    test_id integer NOT NULL,
+    requested_on timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+ALTER TABLE public.tbl_order_test OWNER TO postgres;
+
+--
+-- TOC entry 224 (class 1259 OID 24045)
+-- Name: tbl_pathogen; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_pathogen (
+    pathogen_id integer NOT NULL,
+    crop_id integer NOT NULL,
+    pathogen_name text NOT NULL,
+    synonyms text,
+    active boolean DEFAULT true NOT NULL,
+    added_by text,
+    added_on date DEFAULT CURRENT_DATE NOT NULL
+);
+
+
+ALTER TABLE public.tbl_pathogen OWNER TO postgres;
+
+--
+-- TOC entry 223 (class 1259 OID 24044)
+-- Name: tbl_pathogen_pathogen_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.tbl_pathogen ALTER COLUMN pathogen_id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.tbl_pathogen_pathogen_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- TOC entry 274 (class 1259 OID 24732)
+-- Name: tbl_report; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_report (
+    report_id bigint NOT NULL,
+    order_number text NOT NULL,
+    report_type text DEFAULT 'coa'::text NOT NULL,
+    version integer DEFAULT 1 NOT NULL,
+    supersedes_report_id bigint,
+    amendment_reason text,
+    file_id bigint,
+    generated_on timestamp with time zone DEFAULT now() NOT NULL,
+    generated_by text,
+    approved_on timestamp with time zone,
+    approved_by text,
+    CONSTRAINT ck_amendment_reason CHECK (((version = 1) OR ((amendment_reason IS NOT NULL) AND (supersedes_report_id IS NOT NULL)))),
+    CONSTRAINT tbl_report_report_type_check CHECK ((report_type = ANY (ARRAY['coa'::text, 'interim'::text, 'phytosanitary'::text, 'summary'::text]))),
+    CONSTRAINT tbl_report_version_check CHECK ((version > 0))
+);
+
+
+ALTER TABLE public.tbl_report OWNER TO postgres;
+
+--
+-- TOC entry 276 (class 1259 OID 24774)
+-- Name: tbl_report_dispatch; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_report_dispatch (
+    dispatch_id bigint NOT NULL,
+    report_id bigint NOT NULL,
+    method text NOT NULL,
+    recipient text NOT NULL,
+    subject text,
+    body text,
+    dispatched_by text,
+    queued_on timestamp with time zone DEFAULT now() NOT NULL,
+    sent_on timestamp with time zone,
+    status text DEFAULT 'queued'::text NOT NULL,
+    error_detail text,
+    CONSTRAINT ck_failed_has_reason CHECK (((status <> ALL (ARRAY['failed'::text, 'bounced'::text])) OR (error_detail IS NOT NULL))),
+    CONSTRAINT ck_sent_has_time CHECK (((status <> 'sent'::text) OR (sent_on IS NOT NULL))),
+    CONSTRAINT tbl_report_dispatch_method_check CHECK ((method = ANY (ARRAY['email'::text, 'portal'::text, 'download'::text, 'post'::text, 'hand'::text]))),
+    CONSTRAINT tbl_report_dispatch_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'sent'::text, 'failed'::text, 'bounced'::text, 'cancelled'::text])))
+);
+
+
+ALTER TABLE public.tbl_report_dispatch OWNER TO postgres;
+
+--
+-- TOC entry 275 (class 1259 OID 24773)
+-- Name: tbl_report_dispatch_dispatch_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.tbl_report_dispatch ALTER COLUMN dispatch_id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.tbl_report_dispatch_dispatch_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- TOC entry 269 (class 1259 OID 24651)
+-- Name: tbl_report_format; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_report_format (
+    format_code text NOT NULL,
+    label text NOT NULL,
+    sort_order integer DEFAULT 0 NOT NULL,
+    active boolean DEFAULT true NOT NULL
+);
+
+
+ALTER TABLE public.tbl_report_format OWNER TO postgres;
+
+--
+-- TOC entry 273 (class 1259 OID 24731)
+-- Name: tbl_report_report_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.tbl_report ALTER COLUMN report_id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.tbl_report_report_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- TOC entry 254 (class 1259 OID 24475)
+-- Name: tbl_review; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_review (
+    review_id bigint NOT NULL,
+    order_number text,
+    sample_code text,
+    order_service_id bigint,
+    stage_code text,
+    decision text NOT NULL,
+    comments text,
+    reviewed_by text,
+    reviewed_on timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT ck_review_one_subject CHECK ((((((order_number IS NOT NULL))::integer + ((sample_code IS NOT NULL))::integer) + ((order_service_id IS NOT NULL))::integer) = 1)),
+    CONSTRAINT tbl_review_decision_check CHECK ((decision = ANY (ARRAY['approved'::text, 'rejected'::text, 'returned'::text])))
+);
+
+
+ALTER TABLE public.tbl_review OWNER TO postgres;
+
+--
+-- TOC entry 253 (class 1259 OID 24474)
+-- Name: tbl_review_review_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.tbl_review ALTER COLUMN review_id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.tbl_review_review_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- TOC entry 246 (class 1259 OID 24351)
+-- Name: tbl_sample; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_sample (
+    sample_code text NOT NULL,
+    order_number text NOT NULL,
+    order_service_id bigint,
+    parent_sample_code text,
+    stage_code text NOT NULL,
+    quantity integer DEFAULT 1 NOT NULL,
+    created_on timestamp with time zone DEFAULT now() NOT NULL,
+    created_by text,
+    CONSTRAINT ck_no_self_parent CHECK ((parent_sample_code IS DISTINCT FROM sample_code)),
+    CONSTRAINT tbl_sample_quantity_check CHECK ((quantity > 0))
+);
+
+
+ALTER TABLE public.tbl_sample OWNER TO postgres;
+
+--
+-- TOC entry 228 (class 1259 OID 24099)
+-- Name: tbl_sample_condition; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_sample_condition (
+    condition_code text NOT NULL,
+    label text NOT NULL,
+    sort_order integer DEFAULT 0 NOT NULL,
+    active boolean DEFAULT true NOT NULL
+);
+
+
+ALTER TABLE public.tbl_sample_condition OWNER TO postgres;
+
+--
+-- TOC entry 272 (class 1259 OID 24698)
+-- Name: tbl_sample_disposition; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_sample_disposition (
+    disposition_id bigint NOT NULL,
+    sample_code text NOT NULL,
+    decision text NOT NULL,
+    reason text,
+    decided_on timestamp with time zone DEFAULT now() NOT NULL,
+    decided_by text,
+    witnessed_by text,
+    CONSTRAINT ck_discard_witnessed CHECK (((decision <> 'discard'::text) OR (witnessed_by IS NOT NULL))),
+    CONSTRAINT tbl_sample_disposition_decision_check CHECK ((decision = ANY (ARRAY['discard'::text, 'continue'::text, 'return_to_client'::text, 'retain'::text, 'transfer'::text])))
+);
+
+
+ALTER TABLE public.tbl_sample_disposition OWNER TO postgres;
+
+--
+-- TOC entry 271 (class 1259 OID 24697)
+-- Name: tbl_sample_disposition_disposition_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.tbl_sample_disposition ALTER COLUMN disposition_id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.tbl_sample_disposition_disposition_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- TOC entry 248 (class 1259 OID 24392)
+-- Name: tbl_sample_event; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_sample_event (
+    event_id bigint NOT NULL,
+    sample_code text NOT NULL,
+    stage_code text NOT NULL,
+    state_code text NOT NULL,
+    occurred_on timestamp with time zone DEFAULT now() NOT NULL,
+    actor text,
+    notes text,
+    is_override boolean DEFAULT false NOT NULL,
+    override_reason text,
+    CONSTRAINT ck_override_has_reason CHECK (((NOT is_override) OR (override_reason IS NOT NULL)))
+);
+
+
+ALTER TABLE public.tbl_sample_event OWNER TO postgres;
+
+--
+-- TOC entry 247 (class 1259 OID 24391)
+-- Name: tbl_sample_event_event_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.tbl_sample_event ALTER COLUMN event_id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.tbl_sample_event_event_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- TOC entry 230 (class 1259 OID 24109)
+-- Name: tbl_sample_part; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_sample_part (
+    part_id integer NOT NULL,
+    part_name text NOT NULL,
+    description text,
+    active boolean DEFAULT true NOT NULL
+);
+
+
+ALTER TABLE public.tbl_sample_part OWNER TO postgres;
+
+--
+-- TOC entry 229 (class 1259 OID 24108)
+-- Name: tbl_sample_part_part_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.tbl_sample_part ALTER COLUMN part_id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.tbl_sample_part_part_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- TOC entry 227 (class 1259 OID 24090)
+-- Name: tbl_sample_type; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_sample_type (
+    sample_type_code text NOT NULL,
+    label text NOT NULL,
+    sort_order integer DEFAULT 0 NOT NULL,
+    active boolean DEFAULT true NOT NULL
+);
+
+
+ALTER TABLE public.tbl_sample_type OWNER TO postgres;
+
+--
+-- TOC entry 232 (class 1259 OID 24120)
+-- Name: tbl_sampling_bag; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_sampling_bag (
+    bag_id integer NOT NULL,
+    bag_name text NOT NULL,
+    description text,
+    active boolean DEFAULT true NOT NULL
+);
+
+
+ALTER TABLE public.tbl_sampling_bag OWNER TO postgres;
+
+--
+-- TOC entry 231 (class 1259 OID 24119)
+-- Name: tbl_sampling_bag_bag_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.tbl_sampling_bag ALTER COLUMN bag_id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.tbl_sampling_bag_bag_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- TOC entry 250 (class 1259 OID 24418)
+-- Name: tbl_service_allocation; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_service_allocation (
+    allocation_id bigint NOT NULL,
+    order_service_id bigint NOT NULL,
+    sample_code text,
+    qty integer DEFAULT 1 NOT NULL,
+    allocated_on timestamp with time zone DEFAULT now() NOT NULL,
+    allocated_by text,
+    notes text,
+    CONSTRAINT tbl_service_allocation_qty_check CHECK ((qty > 0))
+);
+
+
+ALTER TABLE public.tbl_service_allocation OWNER TO postgres;
+
+--
+-- TOC entry 249 (class 1259 OID 24417)
+-- Name: tbl_service_allocation_allocation_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.tbl_service_allocation ALTER COLUMN allocation_id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.tbl_service_allocation_allocation_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- TOC entry 236 (class 1259 OID 24165)
+-- Name: tbl_service_catalog; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_service_catalog (
+    service_code text NOT NULL,
+    service_label text NOT NULL,
+    service_kind text NOT NULL,
+    unit text DEFAULT 'plantlet'::text NOT NULL,
+    weight numeric DEFAULT 1.0 NOT NULL,
+    sort_order integer DEFAULT 0 NOT NULL,
+    active boolean DEFAULT true NOT NULL,
+    CONSTRAINT tbl_service_catalog_service_kind_check CHECK ((service_kind = ANY (ARRAY['diagnostic'::text, 'fulfilment'::text])))
+);
+
+
+ALTER TABLE public.tbl_service_catalog OWNER TO postgres;
+
+--
+-- TOC entry 233 (class 1259 OID 24130)
+-- Name: tbl_stage; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_stage (
+    stage_code text NOT NULL,
+    label text NOT NULL,
+    sort_order integer DEFAULT 0 NOT NULL,
+    is_terminal boolean DEFAULT false NOT NULL,
+    active boolean DEFAULT true NOT NULL
+);
+
+
+ALTER TABLE public.tbl_stage OWNER TO postgres;
+
+--
+-- TOC entry 235 (class 1259 OID 24148)
+-- Name: tbl_stage_state; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_stage_state (
+    stage_code text NOT NULL,
+    state_code text NOT NULL
+);
+
+
+ALTER TABLE public.tbl_stage_state OWNER TO postgres;
+
+--
+-- TOC entry 234 (class 1259 OID 24140)
+-- Name: tbl_state; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_state (
+    state_code text NOT NULL,
+    label text NOT NULL,
+    is_failure boolean DEFAULT false NOT NULL
+);
+
+
+ALTER TABLE public.tbl_state OWNER TO postgres;
+
+--
+-- TOC entry 226 (class 1259 OID 24063)
+-- Name: tbl_test_method; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_test_method (
+    test_id integer NOT NULL,
+    acronym text NOT NULL,
+    test_name text NOT NULL,
+    crop_id integer NOT NULL,
+    laboratory_id integer NOT NULL,
+    pathogen_id integer,
+    active boolean DEFAULT true NOT NULL
+);
+
+
+ALTER TABLE public.tbl_test_method OWNER TO postgres;
+
+--
+-- TOC entry 225 (class 1259 OID 24062)
+-- Name: tbl_test_method_test_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.tbl_test_method ALTER COLUMN test_id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.tbl_test_method_test_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- TOC entry 252 (class 1259 OID 24446)
+-- Name: tbl_test_result; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_test_result (
+    result_id bigint NOT NULL,
+    sample_code text NOT NULL,
+    test_id integer NOT NULL,
+    outcome text NOT NULL,
+    value text,
+    tested_on timestamp with time zone DEFAULT now() NOT NULL,
+    tested_by text,
+    notes text,
+    CONSTRAINT tbl_test_result_outcome_check CHECK ((outcome = ANY (ARRAY['positive'::text, 'negative'::text, 'inconclusive'::text, 'pending'::text])))
+);
+
+
+ALTER TABLE public.tbl_test_result OWNER TO postgres;
+
+--
+-- TOC entry 251 (class 1259 OID 24445)
+-- Name: tbl_test_result_result_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.tbl_test_result ALTER COLUMN result_id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.tbl_test_result_result_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- TOC entry 263 (class 1259 OID 24596)
+-- Name: tbl_thermotherapy_detail; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_thermotherapy_detail (
+    sample_code text NOT NULL,
+    conviron text NOT NULL,
+    expected_days_in_conviron integer,
+    entered_on date DEFAULT CURRENT_DATE NOT NULL,
+    exit_date date,
+    exit_notes text,
+    CONSTRAINT ck_exit_after_entry CHECK (((exit_date IS NULL) OR (exit_date >= entered_on))),
+    CONSTRAINT tbl_thermotherapy_detail_expected_days_in_conviron_check CHECK ((expected_days_in_conviron > 0))
+);
+
+
+ALTER TABLE public.tbl_thermotherapy_detail OWNER TO postgres;
+
+--
+-- TOC entry 220 (class 1259 OID 24017)
+-- Name: tbl_variety; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tbl_variety (
+    variety_id integer NOT NULL,
+    crop_id integer NOT NULL,
+    variety_name text NOT NULL,
+    synonyms text,
+    origin_country text,
+    description text,
+    active boolean DEFAULT true NOT NULL,
+    added_by text
+);
+
+
+ALTER TABLE public.tbl_variety OWNER TO postgres;
+
+--
+-- TOC entry 219 (class 1259 OID 24016)
+-- Name: tbl_variety_variety_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+ALTER TABLE public.tbl_variety ALTER COLUMN variety_id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.tbl_variety_variety_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- TOC entry 267 (class 1259 OID 24637)
+-- Name: view_conviron_occupancy; Type: VIEW; Schema: public; Owner: postgres
+--
+
+CREATE VIEW public.view_conviron_occupancy AS
+ SELECT t.conviron,
+    t.sample_code,
+    s.order_number,
+    t.entered_on,
+    t.expected_days_in_conviron,
+    (t.entered_on + t.expected_days_in_conviron) AS due_out,
+    (CURRENT_DATE - t.entered_on) AS days_in,
+        CASE
+            WHEN ((t.expected_days_in_conviron IS NOT NULL) AND (CURRENT_DATE > (t.entered_on + t.expected_days_in_conviron))) THEN true
+            ELSE false
+        END AS overdue
+   FROM (public.tbl_thermotherapy_detail t
+     JOIN public.tbl_sample s ON ((s.sample_code = t.sample_code)))
+  WHERE (t.exit_date IS NULL);
+
+
+ALTER VIEW public.view_conviron_occupancy OWNER TO postgres;
+
+--
+-- TOC entry 277 (class 1259 OID 24799)
+-- Name: view_report_current; Type: VIEW; Schema: public; Owner: postgres
+--
+
+CREATE VIEW public.view_report_current AS
+ SELECT DISTINCT ON (order_number, report_type) report_id,
+    order_number,
+    report_type,
+    version,
+    file_id,
+    generated_on,
+    generated_by,
+    approved_on,
+    approved_by,
+    (approved_on IS NOT NULL) AS is_approved,
+    amendment_reason
+   FROM public.tbl_report r
+  ORDER BY order_number, report_type, version DESC;
+
+
+ALTER VIEW public.view_report_current OWNER TO postgres;
+
+--
+-- TOC entry 279 (class 1259 OID 24808)
+-- Name: view_dispatch_ready; Type: VIEW; Schema: public; Owner: postgres
+--
+
+CREATE VIEW public.view_dispatch_ready AS
+ SELECT rc.report_id,
+    rc.order_number,
+    rc.report_type,
+    rc.version,
+    cu.customer_name,
+    cu.email AS customer_email,
+    o.dispatch_code AS preferred_method_code,
+    dm.label AS preferred_method,
+    rc.approved_on
+   FROM (((public.view_report_current rc
+     JOIN public.tbl_order o ON ((o.order_number = rc.order_number)))
+     JOIN public.tbl_customer cu ON ((cu.customer_id = o.customer_id)))
+     LEFT JOIN public.tbl_dispatch_method dm ON ((dm.dispatch_code = o.dispatch_code)))
+  WHERE (rc.is_approved AND (NOT (EXISTS ( SELECT 1
+           FROM public.tbl_report_dispatch d
+          WHERE ((d.report_id = rc.report_id) AND (d.status = ANY (ARRAY['queued'::text, 'sent'::text])))))));
+
+
+ALTER VIEW public.view_dispatch_ready OWNER TO postgres;
+
+--
+-- TOC entry 281 (class 1259 OID 24818)
+-- Name: view_order_lineage; Type: VIEW; Schema: public; Owner: postgres
+--
+
+CREATE VIEW public.view_order_lineage AS
+ WITH RECURSIVE chain AS (
+         SELECT tbl_order.order_number,
+            tbl_order.parent_order_number,
+            tbl_order.order_kind,
+            tbl_order.order_number AS root_order,
+            0 AS depth
+           FROM public.tbl_order
+          WHERE (tbl_order.parent_order_number IS NULL)
+        UNION ALL
+         SELECT o.order_number,
+            o.parent_order_number,
+            o.order_kind,
+            c.root_order,
+            (c.depth + 1)
+           FROM (public.tbl_order o
+             JOIN chain c ON ((o.parent_order_number = c.order_number)))
+        )
+ SELECT order_number,
+    parent_order_number,
+    order_kind,
+    root_order,
+    depth
+   FROM chain;
+
+
+ALTER VIEW public.view_order_lineage OWNER TO postgres;
+
+--
+-- TOC entry 260 (class 1259 OID 24560)
+-- Name: view_order_service_progress; Type: VIEW; Schema: public; Owner: postgres
+--
+
+CREATE VIEW public.view_order_service_progress AS
+ SELECT os.order_service_id,
+    os.order_number,
+    os.service_code,
+    c.service_label,
+    c.service_kind,
+    c.unit,
+    c.weight,
+    os.purpose,
+    os.origin,
+    os.recipient,
+    os.target_qty,
+    (COALESCE(a.fulfilled_qty, (0)::bigint))::integer AS fulfilled_qty,
+    (GREATEST((os.target_qty - COALESCE(a.fulfilled_qty, (0)::bigint)), (0)::bigint))::integer AS remaining_qty,
+    (LEAST((100)::numeric, floor(((100.0 * (COALESCE(a.fulfilled_qty, (0)::bigint))::numeric) / (NULLIF(os.target_qty, 0))::numeric))))::integer AS pct_complete,
+        CASE
+            WHEN (os.cancelled_on IS NOT NULL) THEN 'cancelled'::text
+            WHEN (COALESCE(a.fulfilled_qty, (0)::bigint) >= os.target_qty) THEN 'fulfilled'::text
+            WHEN (COALESCE(a.fulfilled_qty, (0)::bigint) > 0) THEN 'in_progress'::text
+            WHEN (os.started_on IS NOT NULL) THEN 'in_progress'::text
+            ELSE 'requested'::text
+        END AS status,
+    os.requested_on,
+    os.started_on,
+    os.cancelled_on
+   FROM ((public.tbl_order_service os
+     JOIN public.tbl_service_catalog c ON ((c.service_code = os.service_code)))
+     LEFT JOIN ( SELECT tbl_service_allocation.order_service_id,
+            sum(tbl_service_allocation.qty) AS fulfilled_qty
+           FROM public.tbl_service_allocation
+          GROUP BY tbl_service_allocation.order_service_id) a ON ((a.order_service_id = os.order_service_id)));
+
+
+ALTER VIEW public.view_order_service_progress OWNER TO postgres;
+
+--
+-- TOC entry 261 (class 1259 OID 24565)
+-- Name: view_order_progress; Type: VIEW; Schema: public; Owner: postgres
+--
+
+CREATE VIEW public.view_order_progress AS
+ SELECT o.order_number,
+    o.approval_state,
+    count(p.order_service_id) AS services_requested,
+    count(*) FILTER (WHERE (p.status = 'fulfilled'::text)) AS services_fulfilled,
+    count(*) FILTER (WHERE (p.status = 'in_progress'::text)) AS services_in_progress,
+    count(*) FILTER (WHERE (p.status = 'cancelled'::text)) AS services_cancelled,
+    (COALESCE(floor((sum(((p.pct_complete)::numeric * p.weight)) / NULLIF(sum(p.weight), (0)::numeric))), (0)::numeric))::integer AS pct_complete,
+        CASE
+            WHEN (o.approval_state = 'rejected'::text) THEN 'rejected'::text
+            WHEN (o.approval_state = 'cancelled'::text) THEN 'cancelled'::text
+            WHEN (o.approval_state = 'pending'::text) THEN 'pending_approval'::text
+            WHEN (count(p.order_service_id) = 0) THEN 'approved'::text
+            WHEN (count(*) FILTER (WHERE (p.status <> ALL (ARRAY['fulfilled'::text, 'cancelled'::text]))) = 0) THEN 'completed'::text
+            WHEN (count(*) FILTER (WHERE (p.status = 'in_progress'::text)) > 0) THEN 'in_progress'::text
+            ELSE 'approved'::text
+        END AS derived_status
+   FROM (public.tbl_order o
+     LEFT JOIN public.view_order_service_progress p ON ((p.order_number = o.order_number)))
+  GROUP BY o.order_number, o.approval_state;
+
+
+ALTER VIEW public.view_order_progress OWNER TO postgres;
+
+--
+-- TOC entry 259 (class 1259 OID 24556)
+-- Name: view_sample_current; Type: VIEW; Schema: public; Owner: postgres
+--
+
+CREATE VIEW public.view_sample_current AS
+ SELECT DISTINCT ON (e.sample_code) e.sample_code,
+    s.order_number,
+    s.order_service_id,
+    e.stage_code,
+    e.state_code,
+    e.occurred_on AS since,
+    e.actor
+   FROM (public.tbl_sample_event e
+     JOIN public.tbl_sample s ON ((s.sample_code = e.sample_code)))
+  ORDER BY e.sample_code, e.occurred_on DESC, e.event_id DESC;
+
+
+ALTER VIEW public.view_sample_current OWNER TO postgres;
+
+--
+-- TOC entry 280 (class 1259 OID 24813)
+-- Name: view_pending_disposition; Type: VIEW; Schema: public; Owner: postgres
+--
+
+CREATE VIEW public.view_pending_disposition AS
+ SELECT s.sample_code,
+    s.order_number,
+    s.order_service_id,
+    s.stage_code,
+    s.quantity,
+    c.state_code AS current_state,
+    c.since AS at_stage_since,
+    p.derived_status AS order_status,
+    rc.report_id,
+    rc.is_approved AS report_approved
+   FROM (((public.tbl_sample s
+     JOIN public.view_sample_current c ON ((c.sample_code = s.sample_code)))
+     JOIN public.view_order_progress p ON ((p.order_number = s.order_number)))
+     LEFT JOIN public.view_report_current rc ON (((rc.order_number = s.order_number) AND (rc.report_type = 'coa'::text))))
+  WHERE ((p.derived_status = 'completed'::text) AND (NOT (EXISTS ( SELECT 1
+           FROM public.tbl_sample_disposition d
+          WHERE (d.sample_code = s.sample_code)))));
+
+
+ALTER VIEW public.view_pending_disposition OWNER TO postgres;
+
+--
+-- TOC entry 278 (class 1259 OID 24803)
+-- Name: view_report_ready; Type: VIEW; Schema: public; Owner: postgres
+--
+
+CREATE VIEW public.view_report_ready AS
+ SELECT p.order_number,
+    p.pct_complete,
+    p.services_requested,
+    p.services_fulfilled,
+    o.customer_id,
+    cu.customer_name,
+    cu.email AS customer_email,
+    dm.label AS preferred_dispatch,
+    rc.report_id AS current_report_id,
+    rc.version AS current_version,
+    rc.is_approved
+   FROM ((((public.view_order_progress p
+     JOIN public.tbl_order o ON ((o.order_number = p.order_number)))
+     JOIN public.tbl_customer cu ON ((cu.customer_id = o.customer_id)))
+     LEFT JOIN public.tbl_dispatch_method dm ON ((dm.dispatch_code = o.dispatch_code)))
+     LEFT JOIN public.view_report_current rc ON (((rc.order_number = p.order_number) AND (rc.report_type = 'coa'::text))))
+  WHERE ((p.derived_status = 'completed'::text) AND ((rc.report_id IS NULL) OR (rc.is_approved = false)));
+
+
+ALTER VIEW public.view_report_ready OWNER TO postgres;
+
+--
+-- TOC entry 265 (class 1259 OID 24627)
+-- Name: view_sample_lineage; Type: VIEW; Schema: public; Owner: postgres
+--
+
+CREATE VIEW public.view_sample_lineage AS
+ WITH RECURSIVE chain AS (
+         SELECT s.sample_code,
+            s.parent_sample_code,
+            s.order_number,
+            s.stage_code,
+            s.quantity,
+            s.sample_code AS origin,
+            0 AS depth
+           FROM public.tbl_sample s
+          WHERE (s.parent_sample_code IS NULL)
+        UNION ALL
+         SELECT s.sample_code,
+            s.parent_sample_code,
+            s.order_number,
+            s.stage_code,
+            s.quantity,
+            c.origin,
+            (c.depth + 1)
+           FROM (public.tbl_sample s
+             JOIN chain c ON ((s.parent_sample_code = c.sample_code)))
+        )
+ SELECT sample_code,
+    parent_sample_code,
+    order_number,
+    stage_code,
+    quantity,
+    origin AS root_sample_code,
+    depth
+   FROM chain;
+
+
+ALTER VIEW public.view_sample_lineage OWNER TO postgres;
+
+--
+-- TOC entry 266 (class 1259 OID 24632)
+-- Name: view_stage_queue; Type: VIEW; Schema: public; Owner: postgres
+--
+
+CREATE VIEW public.view_stage_queue AS
+ SELECT c.sample_code,
+    c.order_number,
+    c.order_service_id,
+    c.stage_code,
+    st.label AS stage_label,
+    c.state_code,
+    sv.label AS state_label,
+    sv.is_failure,
+    c.since,
+    (now() - c.since) AS age,
+    s.quantity,
+    s.parent_sample_code
+   FROM (((public.view_sample_current c
+     JOIN public.tbl_sample s ON ((s.sample_code = c.sample_code)))
+     JOIN public.tbl_stage st ON ((st.stage_code = c.stage_code)))
+     JOIN public.tbl_state sv ON ((sv.state_code = c.state_code)));
+
+
+ALTER VIEW public.view_stage_queue OWNER TO postgres;
+
+--
+-- TOC entry 5012 (class 2606 OID 24548)
+-- Name: tbl_activity_log tbl_activity_log_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_activity_log
+    ADD CONSTRAINT tbl_activity_log_pkey PRIMARY KEY (log_id);
+
+
+--
+-- TOC entry 4956 (class 2606 OID 24187)
+-- Name: tbl_app_user tbl_app_user_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_app_user
+    ADD CONSTRAINT tbl_app_user_pkey PRIMARY KEY (username);
+
+
+--
+-- TOC entry 4958 (class 2606 OID 24202)
+-- Name: tbl_code_counter tbl_code_counter_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_code_counter
+    ADD CONSTRAINT tbl_code_counter_pkey PRIMARY KEY (scope, yr, mon);
+
+
+--
+-- TOC entry 5022 (class 2606 OID 24620)
+-- Name: tbl_conservation_detail tbl_conservation_detail_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_conservation_detail
+    ADD CONSTRAINT tbl_conservation_detail_pkey PRIMARY KEY (sample_code);
+
+
+--
+-- TOC entry 5025 (class 2606 OID 24649)
+-- Name: tbl_country tbl_country_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_country
+    ADD CONSTRAINT tbl_country_pkey PRIMARY KEY (country_code);
+
+
+--
+-- TOC entry 4912 (class 2606 OID 24013)
+-- Name: tbl_crop tbl_crop_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_crop
+    ADD CONSTRAINT tbl_crop_pkey PRIMARY KEY (crop_id);
+
+
+--
+-- TOC entry 4907 (class 2606 OID 24001)
+-- Name: tbl_customer tbl_customer_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_customer
+    ADD CONSTRAINT tbl_customer_pkey PRIMARY KEY (customer_id);
+
+
+--
+-- TOC entry 5029 (class 2606 OID 24668)
+-- Name: tbl_dispatch_method tbl_dispatch_method_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_dispatch_method
+    ADD CONSTRAINT tbl_dispatch_method_pkey PRIMARY KEY (dispatch_code);
+
+
+--
+-- TOC entry 5008 (class 2606 OID 24522)
+-- Name: tbl_file tbl_file_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_file
+    ADD CONSTRAINT tbl_file_pkey PRIMARY KEY (file_id);
+
+
+--
+-- TOC entry 4921 (class 2606 OID 24041)
+-- Name: tbl_laboratory tbl_laboratory_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_laboratory
+    ADD CONSTRAINT tbl_laboratory_pkey PRIMARY KEY (laboratory_id);
+
+
+--
+-- TOC entry 4968 (class 2606 OID 24246)
+-- Name: tbl_order_detail tbl_order_detail_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_order_detail
+    ADD CONSTRAINT tbl_order_detail_pkey PRIMARY KEY (order_number);
+
+
+--
+-- TOC entry 4971 (class 2606 OID 24291)
+-- Name: tbl_order_event tbl_order_event_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_order_event
+    ADD CONSTRAINT tbl_order_event_pkey PRIMARY KEY (event_id);
+
+
+--
+-- TOC entry 4964 (class 2606 OID 24220)
+-- Name: tbl_order tbl_order_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_order
+    ADD CONSTRAINT tbl_order_pkey PRIMARY KEY (order_number);
+
+
+--
+-- TOC entry 5015 (class 2606 OID 24579)
+-- Name: tbl_order_quarantine tbl_order_quarantine_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_order_quarantine
+    ADD CONSTRAINT tbl_order_quarantine_pkey PRIMARY KEY (order_number, stage_code);
+
+
+--
+-- TOC entry 4979 (class 2606 OID 24332)
+-- Name: tbl_order_service tbl_order_service_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_order_service
+    ADD CONSTRAINT tbl_order_service_pkey PRIMARY KEY (order_service_id);
+
+
+--
+-- TOC entry 4973 (class 2606 OID 24310)
+-- Name: tbl_order_test tbl_order_test_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_order_test
+    ADD CONSTRAINT tbl_order_test_pkey PRIMARY KEY (order_number, test_id);
+
+
+--
+-- TOC entry 4926 (class 2606 OID 24053)
+-- Name: tbl_pathogen tbl_pathogen_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_pathogen
+    ADD CONSTRAINT tbl_pathogen_pkey PRIMARY KEY (pathogen_id);
+
+
+--
+-- TOC entry 5042 (class 2606 OID 24786)
+-- Name: tbl_report_dispatch tbl_report_dispatch_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_report_dispatch
+    ADD CONSTRAINT tbl_report_dispatch_pkey PRIMARY KEY (dispatch_id);
+
+
+--
+-- TOC entry 5027 (class 2606 OID 24659)
+-- Name: tbl_report_format tbl_report_format_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_report_format
+    ADD CONSTRAINT tbl_report_format_pkey PRIMARY KEY (format_code);
+
+
+--
+-- TOC entry 5036 (class 2606 OID 24744)
+-- Name: tbl_report tbl_report_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_report
+    ADD CONSTRAINT tbl_report_pkey PRIMARY KEY (report_id);
+
+
+--
+-- TOC entry 5004 (class 2606 OID 24484)
+-- Name: tbl_review tbl_review_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_review
+    ADD CONSTRAINT tbl_review_pkey PRIMARY KEY (review_id);
+
+
+--
+-- TOC entry 4938 (class 2606 OID 24107)
+-- Name: tbl_sample_condition tbl_sample_condition_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_sample_condition
+    ADD CONSTRAINT tbl_sample_condition_pkey PRIMARY KEY (condition_code);
+
+
+--
+-- TOC entry 5033 (class 2606 OID 24707)
+-- Name: tbl_sample_disposition tbl_sample_disposition_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_sample_disposition
+    ADD CONSTRAINT tbl_sample_disposition_pkey PRIMARY KEY (disposition_id);
+
+
+--
+-- TOC entry 4989 (class 2606 OID 24399)
+-- Name: tbl_sample_event tbl_sample_event_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_sample_event
+    ADD CONSTRAINT tbl_sample_event_pkey PRIMARY KEY (event_id);
+
+
+--
+-- TOC entry 4940 (class 2606 OID 24116)
+-- Name: tbl_sample_part tbl_sample_part_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_sample_part
+    ADD CONSTRAINT tbl_sample_part_pkey PRIMARY KEY (part_id);
+
+
+--
+-- TOC entry 4985 (class 2606 OID 24361)
+-- Name: tbl_sample tbl_sample_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_sample
+    ADD CONSTRAINT tbl_sample_pkey PRIMARY KEY (sample_code);
+
+
+--
+-- TOC entry 4936 (class 2606 OID 24098)
+-- Name: tbl_sample_type tbl_sample_type_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_sample_type
+    ADD CONSTRAINT tbl_sample_type_pkey PRIMARY KEY (sample_type_code);
+
+
+--
+-- TOC entry 4944 (class 2606 OID 24127)
+-- Name: tbl_sampling_bag tbl_sampling_bag_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_sampling_bag
+    ADD CONSTRAINT tbl_sampling_bag_pkey PRIMARY KEY (bag_id);
+
+
+--
+-- TOC entry 4993 (class 2606 OID 24427)
+-- Name: tbl_service_allocation tbl_service_allocation_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_service_allocation
+    ADD CONSTRAINT tbl_service_allocation_pkey PRIMARY KEY (allocation_id);
+
+
+--
+-- TOC entry 4954 (class 2606 OID 24176)
+-- Name: tbl_service_catalog tbl_service_catalog_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_service_catalog
+    ADD CONSTRAINT tbl_service_catalog_pkey PRIMARY KEY (service_code);
+
+
+--
+-- TOC entry 4948 (class 2606 OID 24139)
+-- Name: tbl_stage tbl_stage_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_stage
+    ADD CONSTRAINT tbl_stage_pkey PRIMARY KEY (stage_code);
+
+
+--
+-- TOC entry 4952 (class 2606 OID 24154)
+-- Name: tbl_stage_state tbl_stage_state_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_stage_state
+    ADD CONSTRAINT tbl_stage_state_pkey PRIMARY KEY (stage_code, state_code);
+
+
+--
+-- TOC entry 4950 (class 2606 OID 24147)
+-- Name: tbl_state tbl_state_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_state
+    ADD CONSTRAINT tbl_state_pkey PRIMARY KEY (state_code);
+
+
+--
+-- TOC entry 4932 (class 2606 OID 24070)
+-- Name: tbl_test_method tbl_test_method_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_test_method
+    ADD CONSTRAINT tbl_test_method_pkey PRIMARY KEY (test_id);
+
+
+--
+-- TOC entry 4997 (class 2606 OID 24454)
+-- Name: tbl_test_result tbl_test_result_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_test_result
+    ADD CONSTRAINT tbl_test_result_pkey PRIMARY KEY (result_id);
+
+
+--
+-- TOC entry 5019 (class 2606 OID 24605)
+-- Name: tbl_thermotherapy_detail tbl_thermotherapy_detail_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_thermotherapy_detail
+    ADD CONSTRAINT tbl_thermotherapy_detail_pkey PRIMARY KEY (sample_code);
+
+
+--
+-- TOC entry 4917 (class 2606 OID 24024)
+-- Name: tbl_variety tbl_variety_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_variety
+    ADD CONSTRAINT tbl_variety_pkey PRIMARY KEY (variety_id);
+
+
+--
+-- TOC entry 4946 (class 2606 OID 24129)
+-- Name: tbl_sampling_bag uq_bag_name; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_sampling_bag
+    ADD CONSTRAINT uq_bag_name UNIQUE (bag_name);
+
+
+--
+-- TOC entry 4914 (class 2606 OID 24015)
+-- Name: tbl_crop uq_crop_name; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_crop
+    ADD CONSTRAINT uq_crop_name UNIQUE (crop_name);
+
+
+--
+-- TOC entry 4910 (class 2606 OID 24003)
+-- Name: tbl_customer uq_customer_name; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_customer
+    ADD CONSTRAINT uq_customer_name UNIQUE (customer_name);
+
+
+--
+-- TOC entry 4923 (class 2606 OID 24043)
+-- Name: tbl_laboratory uq_laboratory_name; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_laboratory
+    ADD CONSTRAINT uq_laboratory_name UNIQUE (laboratory_name);
+
+
+--
+-- TOC entry 4942 (class 2606 OID 24118)
+-- Name: tbl_sample_part uq_part_name; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_sample_part
+    ADD CONSTRAINT uq_part_name UNIQUE (part_name);
+
+
+--
+-- TOC entry 4928 (class 2606 OID 24055)
+-- Name: tbl_pathogen uq_pathogen; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_pathogen
+    ADD CONSTRAINT uq_pathogen UNIQUE (crop_id, pathogen_name);
+
+
+--
+-- TOC entry 5038 (class 2606 OID 24746)
+-- Name: tbl_report uq_report_version; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_report
+    ADD CONSTRAINT uq_report_version UNIQUE (order_number, report_type, version);
+
+
+--
+-- TOC entry 4999 (class 2606 OID 24456)
+-- Name: tbl_test_result uq_result; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_test_result
+    ADD CONSTRAINT uq_result UNIQUE (sample_code, test_id, tested_on);
+
+
+--
+-- TOC entry 4934 (class 2606 OID 24072)
+-- Name: tbl_test_method uq_test_acronym; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_test_method
+    ADD CONSTRAINT uq_test_acronym UNIQUE (acronym);
+
+
+--
+-- TOC entry 4919 (class 2606 OID 24026)
+-- Name: tbl_variety uq_variety; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_variety
+    ADD CONSTRAINT uq_variety UNIQUE (crop_id, variety_name);
+
+
+--
+-- TOC entry 5009 (class 1259 OID 24555)
+-- Name: ix_activity_time; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_activity_time ON public.tbl_activity_log USING btree (occurred_on DESC);
+
+
+--
+-- TOC entry 5010 (class 1259 OID 24554)
+-- Name: ix_activity_user; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_activity_user ON public.tbl_activity_log USING btree (username, occurred_on DESC);
+
+
+--
+-- TOC entry 4990 (class 1259 OID 24444)
+-- Name: ix_alloc_sample; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_alloc_sample ON public.tbl_service_allocation USING btree (sample_code);
+
+
+--
+-- TOC entry 4991 (class 1259 OID 24443)
+-- Name: ix_alloc_service; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_alloc_service ON public.tbl_service_allocation USING btree (order_service_id);
+
+
+--
+-- TOC entry 5020 (class 1259 OID 24626)
+-- Name: ix_conservation_location; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_conservation_location ON public.tbl_conservation_detail USING btree (storage_location);
+
+
+--
+-- TOC entry 5023 (class 1259 OID 24650)
+-- Name: ix_country_name; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_country_name ON public.tbl_country USING btree (country_name);
+
+
+--
+-- TOC entry 5039 (class 1259 OID 24798)
+-- Name: ix_dispatch_queued; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_dispatch_queued ON public.tbl_report_dispatch USING btree (status) WHERE (status = 'queued'::text);
+
+
+--
+-- TOC entry 5040 (class 1259 OID 24797)
+-- Name: ix_dispatch_report; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_dispatch_report ON public.tbl_report_dispatch USING btree (report_id);
+
+
+--
+-- TOC entry 5030 (class 1259 OID 24724)
+-- Name: ix_disposition_decision; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_disposition_decision ON public.tbl_sample_disposition USING btree (decision, decided_on DESC);
+
+
+--
+-- TOC entry 5031 (class 1259 OID 24723)
+-- Name: ix_disposition_sample; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_disposition_sample ON public.tbl_sample_disposition USING btree (sample_code);
+
+
+--
+-- TOC entry 4986 (class 1259 OID 24415)
+-- Name: ix_event_sample; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_event_sample ON public.tbl_sample_event USING btree (sample_code, occurred_on DESC);
+
+
+--
+-- TOC entry 4987 (class 1259 OID 24416)
+-- Name: ix_event_stage; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_event_stage ON public.tbl_sample_event USING btree (stage_code, state_code);
+
+
+--
+-- TOC entry 5005 (class 1259 OID 24538)
+-- Name: ix_file_order; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_file_order ON public.tbl_file USING btree (order_number);
+
+
+--
+-- TOC entry 5006 (class 1259 OID 24539)
+-- Name: ix_file_sample; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_file_sample ON public.tbl_file USING btree (sample_code);
+
+
+--
+-- TOC entry 4959 (class 1259 OID 24237)
+-- Name: ix_order_created; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_order_created ON public.tbl_order USING btree (created_on DESC);
+
+
+--
+-- TOC entry 4960 (class 1259 OID 24236)
+-- Name: ix_order_customer; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_order_customer ON public.tbl_order USING btree (customer_id);
+
+
+--
+-- TOC entry 4965 (class 1259 OID 24282)
+-- Name: ix_order_detail_crop; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_order_detail_crop ON public.tbl_order_detail USING btree (crop_id);
+
+
+--
+-- TOC entry 4966 (class 1259 OID 24674)
+-- Name: ix_order_detail_origin; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_order_detail_origin ON public.tbl_order_detail USING btree (origin_country_code);
+
+
+--
+-- TOC entry 4969 (class 1259 OID 24302)
+-- Name: ix_order_event; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_order_event ON public.tbl_order_event USING btree (order_number, occurred_on DESC);
+
+
+--
+-- TOC entry 4961 (class 1259 OID 24696)
+-- Name: ix_order_parent; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_order_parent ON public.tbl_order USING btree (parent_order_number) WHERE (parent_order_number IS NOT NULL);
+
+
+--
+-- TOC entry 4962 (class 1259 OID 24238)
+-- Name: ix_order_pending; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_order_pending ON public.tbl_order USING btree (approval_state) WHERE (approval_state = 'pending'::text);
+
+
+--
+-- TOC entry 4974 (class 1259 OID 24730)
+-- Name: ix_os_from_disposition; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_os_from_disposition ON public.tbl_order_service USING btree (from_disposition_id) WHERE (from_disposition_id IS NOT NULL);
+
+
+--
+-- TOC entry 4975 (class 1259 OID 24350)
+-- Name: ix_os_open; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_os_open ON public.tbl_order_service USING btree (order_number) WHERE (cancelled_on IS NULL);
+
+
+--
+-- TOC entry 4976 (class 1259 OID 24348)
+-- Name: ix_os_order; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_os_order ON public.tbl_order_service USING btree (order_number);
+
+
+--
+-- TOC entry 4977 (class 1259 OID 24349)
+-- Name: ix_os_service; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_os_service ON public.tbl_order_service USING btree (service_code);
+
+
+--
+-- TOC entry 4924 (class 1259 OID 24061)
+-- Name: ix_pathogen_crop; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_pathogen_crop ON public.tbl_pathogen USING btree (crop_id);
+
+
+--
+-- TOC entry 5013 (class 1259 OID 24595)
+-- Name: ix_quarantine_bench; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_quarantine_bench ON public.tbl_order_quarantine USING btree (bench_no);
+
+
+--
+-- TOC entry 5034 (class 1259 OID 24772)
+-- Name: ix_report_order; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_report_order ON public.tbl_report USING btree (order_number, report_type, version DESC);
+
+
+--
+-- TOC entry 4994 (class 1259 OID 24472)
+-- Name: ix_result_sample; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_result_sample ON public.tbl_test_result USING btree (sample_code);
+
+
+--
+-- TOC entry 4995 (class 1259 OID 24473)
+-- Name: ix_result_test; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_result_test ON public.tbl_test_result USING btree (test_id);
+
+
+--
+-- TOC entry 5000 (class 1259 OID 24510)
+-- Name: ix_review_order; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_review_order ON public.tbl_review USING btree (order_number);
+
+
+--
+-- TOC entry 5001 (class 1259 OID 24511)
+-- Name: ix_review_sample; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_review_sample ON public.tbl_review USING btree (sample_code);
+
+
+--
+-- TOC entry 5002 (class 1259 OID 24512)
+-- Name: ix_review_service; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_review_service ON public.tbl_review USING btree (order_service_id);
+
+
+--
+-- TOC entry 4980 (class 1259 OID 24387)
+-- Name: ix_sample_order; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_sample_order ON public.tbl_sample USING btree (order_number);
+
+
+--
+-- TOC entry 4981 (class 1259 OID 24389)
+-- Name: ix_sample_parent; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_sample_parent ON public.tbl_sample USING btree (parent_sample_code);
+
+
+--
+-- TOC entry 4982 (class 1259 OID 24388)
+-- Name: ix_sample_service; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_sample_service ON public.tbl_sample USING btree (order_service_id);
+
+
+--
+-- TOC entry 4983 (class 1259 OID 24390)
+-- Name: ix_sample_stage; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_sample_stage ON public.tbl_sample USING btree (stage_code);
+
+
+--
+-- TOC entry 4929 (class 1259 OID 24089)
+-- Name: ix_test_method_crop; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_test_method_crop ON public.tbl_test_method USING btree (crop_id);
+
+
+--
+-- TOC entry 4930 (class 1259 OID 24088)
+-- Name: ix_test_method_lab; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_test_method_lab ON public.tbl_test_method USING btree (laboratory_id);
+
+
+--
+-- TOC entry 5016 (class 1259 OID 24611)
+-- Name: ix_thermo_conviron; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_thermo_conviron ON public.tbl_thermotherapy_detail USING btree (conviron);
+
+
+--
+-- TOC entry 5017 (class 1259 OID 24612)
+-- Name: ix_thermo_open; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_thermo_open ON public.tbl_thermotherapy_detail USING btree (conviron) WHERE (exit_date IS NULL);
+
+
+--
+-- TOC entry 4915 (class 1259 OID 24032)
+-- Name: ix_variety_crop; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX ix_variety_crop ON public.tbl_variety USING btree (crop_id);
+
+
+--
+-- TOC entry 4908 (class 1259 OID 24004)
+-- Name: uq_customer_email; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE UNIQUE INDEX uq_customer_email ON public.tbl_customer USING btree (lower(email)) WHERE (email IS NOT NULL);
+
+
+--
+-- TOC entry 5078 (class 2606 OID 24410)
+-- Name: tbl_sample_event fk_event_stage_state; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_sample_event
+    ADD CONSTRAINT fk_event_stage_state FOREIGN KEY (stage_code, state_code) REFERENCES public.tbl_stage_state(stage_code, state_code);
+
+
+--
+-- TOC entry 5095 (class 2606 OID 24549)
+-- Name: tbl_activity_log tbl_activity_log_username_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_activity_log
+    ADD CONSTRAINT tbl_activity_log_username_fkey FOREIGN KEY (username) REFERENCES public.tbl_app_user(username);
+
+
+--
+-- TOC entry 5050 (class 2606 OID 24188)
+-- Name: tbl_app_user tbl_app_user_laboratory_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_app_user
+    ADD CONSTRAINT tbl_app_user_laboratory_id_fkey FOREIGN KEY (laboratory_id) REFERENCES public.tbl_laboratory(laboratory_id);
+
+
+--
+-- TOC entry 5100 (class 2606 OID 24621)
+-- Name: tbl_conservation_detail tbl_conservation_detail_sample_code_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_conservation_detail
+    ADD CONSTRAINT tbl_conservation_detail_sample_code_fkey FOREIGN KEY (sample_code) REFERENCES public.tbl_sample(sample_code) ON DELETE CASCADE;
+
+
+--
+-- TOC entry 5092 (class 2606 OID 24523)
+-- Name: tbl_file tbl_file_order_number_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_file
+    ADD CONSTRAINT tbl_file_order_number_fkey FOREIGN KEY (order_number) REFERENCES public.tbl_order(order_number) ON DELETE CASCADE;
+
+
+--
+-- TOC entry 5093 (class 2606 OID 24528)
+-- Name: tbl_file tbl_file_sample_code_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_file
+    ADD CONSTRAINT tbl_file_sample_code_fkey FOREIGN KEY (sample_code) REFERENCES public.tbl_sample(sample_code) ON DELETE CASCADE;
+
+
+--
+-- TOC entry 5094 (class 2606 OID 24533)
+-- Name: tbl_file tbl_file_uploaded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_file
+    ADD CONSTRAINT tbl_file_uploaded_by_fkey FOREIGN KEY (uploaded_by) REFERENCES public.tbl_app_user(username);
+
+
+--
+-- TOC entry 5051 (class 2606 OID 24226)
+-- Name: tbl_order tbl_order_approved_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_order
+    ADD CONSTRAINT tbl_order_approved_by_fkey FOREIGN KEY (approved_by) REFERENCES public.tbl_app_user(username);
+
+
+--
+-- TOC entry 5052 (class 2606 OID 24231)
+-- Name: tbl_order tbl_order_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_order
+    ADD CONSTRAINT tbl_order_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.tbl_app_user(username);
+
+
+--
+-- TOC entry 5053 (class 2606 OID 24221)
+-- Name: tbl_order tbl_order_customer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_order
+    ADD CONSTRAINT tbl_order_customer_id_fkey FOREIGN KEY (customer_id) REFERENCES public.tbl_customer(customer_id) ON UPDATE CASCADE;
+
+
+--
+-- TOC entry 5057 (class 2606 OID 24277)
+-- Name: tbl_order_detail tbl_order_detail_bag_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_order_detail
+    ADD CONSTRAINT tbl_order_detail_bag_id_fkey FOREIGN KEY (bag_id) REFERENCES public.tbl_sampling_bag(bag_id);
+
+
+--
+-- TOC entry 5058 (class 2606 OID 24267)
+-- Name: tbl_order_detail tbl_order_detail_condition_code_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_order_detail
+    ADD CONSTRAINT tbl_order_detail_condition_code_fkey FOREIGN KEY (condition_code) REFERENCES public.tbl_sample_condition(condition_code);
+
+
+--
+-- TOC entry 5059 (class 2606 OID 24252)
+-- Name: tbl_order_detail tbl_order_detail_crop_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_order_detail
+    ADD CONSTRAINT tbl_order_detail_crop_id_fkey FOREIGN KEY (crop_id) REFERENCES public.tbl_crop(crop_id);
+
+
+--
+-- TOC entry 5060 (class 2606 OID 24247)
+-- Name: tbl_order_detail tbl_order_detail_order_number_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_order_detail
+    ADD CONSTRAINT tbl_order_detail_order_number_fkey FOREIGN KEY (order_number) REFERENCES public.tbl_order(order_number) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- TOC entry 5061 (class 2606 OID 24669)
+-- Name: tbl_order_detail tbl_order_detail_origin_country_code_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_order_detail
+    ADD CONSTRAINT tbl_order_detail_origin_country_code_fkey FOREIGN KEY (origin_country_code) REFERENCES public.tbl_country(country_code);
+
+
+--
+-- TOC entry 5062 (class 2606 OID 24272)
+-- Name: tbl_order_detail tbl_order_detail_part_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_order_detail
+    ADD CONSTRAINT tbl_order_detail_part_id_fkey FOREIGN KEY (part_id) REFERENCES public.tbl_sample_part(part_id);
+
+
+--
+-- TOC entry 5063 (class 2606 OID 24262)
+-- Name: tbl_order_detail tbl_order_detail_sample_type_code_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_order_detail
+    ADD CONSTRAINT tbl_order_detail_sample_type_code_fkey FOREIGN KEY (sample_type_code) REFERENCES public.tbl_sample_type(sample_type_code);
+
+
+--
+-- TOC entry 5064 (class 2606 OID 24257)
+-- Name: tbl_order_detail tbl_order_detail_variety_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_order_detail
+    ADD CONSTRAINT tbl_order_detail_variety_id_fkey FOREIGN KEY (variety_id) REFERENCES public.tbl_variety(variety_id);
+
+
+--
+-- TOC entry 5054 (class 2606 OID 24680)
+-- Name: tbl_order tbl_order_dispatch_code_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_order
+    ADD CONSTRAINT tbl_order_dispatch_code_fkey FOREIGN KEY (dispatch_code) REFERENCES public.tbl_dispatch_method(dispatch_code);
+
+
+--
+-- TOC entry 5065 (class 2606 OID 24297)
+-- Name: tbl_order_event tbl_order_event_actor_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_order_event
+    ADD CONSTRAINT tbl_order_event_actor_fkey FOREIGN KEY (actor) REFERENCES public.tbl_app_user(username);
+
+
+--
+-- TOC entry 5066 (class 2606 OID 24292)
+-- Name: tbl_order_event tbl_order_event_order_number_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_order_event
+    ADD CONSTRAINT tbl_order_event_order_number_fkey FOREIGN KEY (order_number) REFERENCES public.tbl_order(order_number) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- TOC entry 5055 (class 2606 OID 24688)
+-- Name: tbl_order tbl_order_parent_order_number_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_order
+    ADD CONSTRAINT tbl_order_parent_order_number_fkey FOREIGN KEY (parent_order_number) REFERENCES public.tbl_order(order_number) ON UPDATE CASCADE;
+
+
+--
+-- TOC entry 5096 (class 2606 OID 24580)
+-- Name: tbl_order_quarantine tbl_order_quarantine_order_number_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_order_quarantine
+    ADD CONSTRAINT tbl_order_quarantine_order_number_fkey FOREIGN KEY (order_number) REFERENCES public.tbl_order(order_number) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- TOC entry 5097 (class 2606 OID 24590)
+-- Name: tbl_order_quarantine tbl_order_quarantine_received_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_order_quarantine
+    ADD CONSTRAINT tbl_order_quarantine_received_by_fkey FOREIGN KEY (received_by) REFERENCES public.tbl_app_user(username);
+
+
+--
+-- TOC entry 5098 (class 2606 OID 24585)
+-- Name: tbl_order_quarantine tbl_order_quarantine_stage_code_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_order_quarantine
+    ADD CONSTRAINT tbl_order_quarantine_stage_code_fkey FOREIGN KEY (stage_code) REFERENCES public.tbl_stage(stage_code);
+
+
+--
+-- TOC entry 5056 (class 2606 OID 24675)
+-- Name: tbl_order tbl_order_report_format_code_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_order
+    ADD CONSTRAINT tbl_order_report_format_code_fkey FOREIGN KEY (report_format_code) REFERENCES public.tbl_report_format(format_code);
+
+
+--
+-- TOC entry 5069 (class 2606 OID 24725)
+-- Name: tbl_order_service tbl_order_service_from_disposition_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_order_service
+    ADD CONSTRAINT tbl_order_service_from_disposition_id_fkey FOREIGN KEY (from_disposition_id) REFERENCES public.tbl_sample_disposition(disposition_id);
+
+
+--
+-- TOC entry 5070 (class 2606 OID 24333)
+-- Name: tbl_order_service tbl_order_service_order_number_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_order_service
+    ADD CONSTRAINT tbl_order_service_order_number_fkey FOREIGN KEY (order_number) REFERENCES public.tbl_order(order_number) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- TOC entry 5071 (class 2606 OID 24343)
+-- Name: tbl_order_service tbl_order_service_requested_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_order_service
+    ADD CONSTRAINT tbl_order_service_requested_by_fkey FOREIGN KEY (requested_by) REFERENCES public.tbl_app_user(username);
+
+
+--
+-- TOC entry 5072 (class 2606 OID 24338)
+-- Name: tbl_order_service tbl_order_service_service_code_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_order_service
+    ADD CONSTRAINT tbl_order_service_service_code_fkey FOREIGN KEY (service_code) REFERENCES public.tbl_service_catalog(service_code);
+
+
+--
+-- TOC entry 5067 (class 2606 OID 24311)
+-- Name: tbl_order_test tbl_order_test_order_number_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_order_test
+    ADD CONSTRAINT tbl_order_test_order_number_fkey FOREIGN KEY (order_number) REFERENCES public.tbl_order(order_number) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- TOC entry 5068 (class 2606 OID 24316)
+-- Name: tbl_order_test tbl_order_test_test_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_order_test
+    ADD CONSTRAINT tbl_order_test_test_id_fkey FOREIGN KEY (test_id) REFERENCES public.tbl_test_method(test_id);
+
+
+--
+-- TOC entry 5044 (class 2606 OID 24056)
+-- Name: tbl_pathogen tbl_pathogen_crop_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_pathogen
+    ADD CONSTRAINT tbl_pathogen_crop_id_fkey FOREIGN KEY (crop_id) REFERENCES public.tbl_crop(crop_id) ON UPDATE CASCADE;
+
+
+--
+-- TOC entry 5104 (class 2606 OID 24767)
+-- Name: tbl_report tbl_report_approved_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_report
+    ADD CONSTRAINT tbl_report_approved_by_fkey FOREIGN KEY (approved_by) REFERENCES public.tbl_app_user(username);
+
+
+--
+-- TOC entry 5109 (class 2606 OID 24792)
+-- Name: tbl_report_dispatch tbl_report_dispatch_dispatched_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_report_dispatch
+    ADD CONSTRAINT tbl_report_dispatch_dispatched_by_fkey FOREIGN KEY (dispatched_by) REFERENCES public.tbl_app_user(username);
+
+
+--
+-- TOC entry 5110 (class 2606 OID 24787)
+-- Name: tbl_report_dispatch tbl_report_dispatch_report_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_report_dispatch
+    ADD CONSTRAINT tbl_report_dispatch_report_id_fkey FOREIGN KEY (report_id) REFERENCES public.tbl_report(report_id) ON DELETE CASCADE;
+
+
+--
+-- TOC entry 5105 (class 2606 OID 24757)
+-- Name: tbl_report tbl_report_file_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_report
+    ADD CONSTRAINT tbl_report_file_id_fkey FOREIGN KEY (file_id) REFERENCES public.tbl_file(file_id);
+
+
+--
+-- TOC entry 5106 (class 2606 OID 24762)
+-- Name: tbl_report tbl_report_generated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_report
+    ADD CONSTRAINT tbl_report_generated_by_fkey FOREIGN KEY (generated_by) REFERENCES public.tbl_app_user(username);
+
+
+--
+-- TOC entry 5107 (class 2606 OID 24747)
+-- Name: tbl_report tbl_report_order_number_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_report
+    ADD CONSTRAINT tbl_report_order_number_fkey FOREIGN KEY (order_number) REFERENCES public.tbl_order(order_number) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- TOC entry 5108 (class 2606 OID 24752)
+-- Name: tbl_report tbl_report_supersedes_report_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_report
+    ADD CONSTRAINT tbl_report_supersedes_report_id_fkey FOREIGN KEY (supersedes_report_id) REFERENCES public.tbl_report(report_id);
+
+
+--
+-- TOC entry 5087 (class 2606 OID 24485)
+-- Name: tbl_review tbl_review_order_number_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_review
+    ADD CONSTRAINT tbl_review_order_number_fkey FOREIGN KEY (order_number) REFERENCES public.tbl_order(order_number) ON DELETE CASCADE;
+
+
+--
+-- TOC entry 5088 (class 2606 OID 24495)
+-- Name: tbl_review tbl_review_order_service_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_review
+    ADD CONSTRAINT tbl_review_order_service_id_fkey FOREIGN KEY (order_service_id) REFERENCES public.tbl_order_service(order_service_id) ON DELETE CASCADE;
+
+
+--
+-- TOC entry 5089 (class 2606 OID 24505)
+-- Name: tbl_review tbl_review_reviewed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_review
+    ADD CONSTRAINT tbl_review_reviewed_by_fkey FOREIGN KEY (reviewed_by) REFERENCES public.tbl_app_user(username);
+
+
+--
+-- TOC entry 5090 (class 2606 OID 24490)
+-- Name: tbl_review tbl_review_sample_code_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_review
+    ADD CONSTRAINT tbl_review_sample_code_fkey FOREIGN KEY (sample_code) REFERENCES public.tbl_sample(sample_code) ON DELETE CASCADE;
+
+
+--
+-- TOC entry 5091 (class 2606 OID 24500)
+-- Name: tbl_review tbl_review_stage_code_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_review
+    ADD CONSTRAINT tbl_review_stage_code_fkey FOREIGN KEY (stage_code) REFERENCES public.tbl_stage(stage_code);
+
+
+--
+-- TOC entry 5073 (class 2606 OID 24382)
+-- Name: tbl_sample tbl_sample_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_sample
+    ADD CONSTRAINT tbl_sample_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.tbl_app_user(username);
+
+
+--
+-- TOC entry 5101 (class 2606 OID 24713)
+-- Name: tbl_sample_disposition tbl_sample_disposition_decided_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_sample_disposition
+    ADD CONSTRAINT tbl_sample_disposition_decided_by_fkey FOREIGN KEY (decided_by) REFERENCES public.tbl_app_user(username);
+
+
+--
+-- TOC entry 5102 (class 2606 OID 24708)
+-- Name: tbl_sample_disposition tbl_sample_disposition_sample_code_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_sample_disposition
+    ADD CONSTRAINT tbl_sample_disposition_sample_code_fkey FOREIGN KEY (sample_code) REFERENCES public.tbl_sample(sample_code) ON DELETE CASCADE;
+
+
+--
+-- TOC entry 5103 (class 2606 OID 24718)
+-- Name: tbl_sample_disposition tbl_sample_disposition_witnessed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_sample_disposition
+    ADD CONSTRAINT tbl_sample_disposition_witnessed_by_fkey FOREIGN KEY (witnessed_by) REFERENCES public.tbl_app_user(username);
+
+
+--
+-- TOC entry 5079 (class 2606 OID 24405)
+-- Name: tbl_sample_event tbl_sample_event_actor_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_sample_event
+    ADD CONSTRAINT tbl_sample_event_actor_fkey FOREIGN KEY (actor) REFERENCES public.tbl_app_user(username);
+
+
+--
+-- TOC entry 5080 (class 2606 OID 24400)
+-- Name: tbl_sample_event tbl_sample_event_sample_code_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_sample_event
+    ADD CONSTRAINT tbl_sample_event_sample_code_fkey FOREIGN KEY (sample_code) REFERENCES public.tbl_sample(sample_code) ON DELETE CASCADE;
+
+
+--
+-- TOC entry 5074 (class 2606 OID 24362)
+-- Name: tbl_sample tbl_sample_order_number_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_sample
+    ADD CONSTRAINT tbl_sample_order_number_fkey FOREIGN KEY (order_number) REFERENCES public.tbl_order(order_number) ON UPDATE CASCADE;
+
+
+--
+-- TOC entry 5075 (class 2606 OID 24367)
+-- Name: tbl_sample tbl_sample_order_service_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_sample
+    ADD CONSTRAINT tbl_sample_order_service_id_fkey FOREIGN KEY (order_service_id) REFERENCES public.tbl_order_service(order_service_id);
+
+
+--
+-- TOC entry 5076 (class 2606 OID 24372)
+-- Name: tbl_sample tbl_sample_parent_sample_code_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_sample
+    ADD CONSTRAINT tbl_sample_parent_sample_code_fkey FOREIGN KEY (parent_sample_code) REFERENCES public.tbl_sample(sample_code);
+
+
+--
+-- TOC entry 5077 (class 2606 OID 24377)
+-- Name: tbl_sample tbl_sample_stage_code_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_sample
+    ADD CONSTRAINT tbl_sample_stage_code_fkey FOREIGN KEY (stage_code) REFERENCES public.tbl_stage(stage_code);
+
+
+--
+-- TOC entry 5081 (class 2606 OID 24438)
+-- Name: tbl_service_allocation tbl_service_allocation_allocated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_service_allocation
+    ADD CONSTRAINT tbl_service_allocation_allocated_by_fkey FOREIGN KEY (allocated_by) REFERENCES public.tbl_app_user(username);
+
+
+--
+-- TOC entry 5082 (class 2606 OID 24428)
+-- Name: tbl_service_allocation tbl_service_allocation_order_service_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_service_allocation
+    ADD CONSTRAINT tbl_service_allocation_order_service_id_fkey FOREIGN KEY (order_service_id) REFERENCES public.tbl_order_service(order_service_id) ON DELETE CASCADE;
+
+
+--
+-- TOC entry 5083 (class 2606 OID 24433)
+-- Name: tbl_service_allocation tbl_service_allocation_sample_code_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_service_allocation
+    ADD CONSTRAINT tbl_service_allocation_sample_code_fkey FOREIGN KEY (sample_code) REFERENCES public.tbl_sample(sample_code);
+
+
+--
+-- TOC entry 5048 (class 2606 OID 24155)
+-- Name: tbl_stage_state tbl_stage_state_stage_code_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_stage_state
+    ADD CONSTRAINT tbl_stage_state_stage_code_fkey FOREIGN KEY (stage_code) REFERENCES public.tbl_stage(stage_code) ON DELETE CASCADE;
+
+
+--
+-- TOC entry 5049 (class 2606 OID 24160)
+-- Name: tbl_stage_state tbl_stage_state_state_code_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_stage_state
+    ADD CONSTRAINT tbl_stage_state_state_code_fkey FOREIGN KEY (state_code) REFERENCES public.tbl_state(state_code) ON DELETE CASCADE;
+
+
+--
+-- TOC entry 5045 (class 2606 OID 24073)
+-- Name: tbl_test_method tbl_test_method_crop_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_test_method
+    ADD CONSTRAINT tbl_test_method_crop_id_fkey FOREIGN KEY (crop_id) REFERENCES public.tbl_crop(crop_id) ON UPDATE CASCADE;
+
+
+--
+-- TOC entry 5046 (class 2606 OID 24078)
+-- Name: tbl_test_method tbl_test_method_laboratory_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_test_method
+    ADD CONSTRAINT tbl_test_method_laboratory_id_fkey FOREIGN KEY (laboratory_id) REFERENCES public.tbl_laboratory(laboratory_id);
+
+
+--
+-- TOC entry 5047 (class 2606 OID 24083)
+-- Name: tbl_test_method tbl_test_method_pathogen_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_test_method
+    ADD CONSTRAINT tbl_test_method_pathogen_id_fkey FOREIGN KEY (pathogen_id) REFERENCES public.tbl_pathogen(pathogen_id);
+
+
+--
+-- TOC entry 5084 (class 2606 OID 24457)
+-- Name: tbl_test_result tbl_test_result_sample_code_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_test_result
+    ADD CONSTRAINT tbl_test_result_sample_code_fkey FOREIGN KEY (sample_code) REFERENCES public.tbl_sample(sample_code) ON DELETE CASCADE;
+
+
+--
+-- TOC entry 5085 (class 2606 OID 24462)
+-- Name: tbl_test_result tbl_test_result_test_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_test_result
+    ADD CONSTRAINT tbl_test_result_test_id_fkey FOREIGN KEY (test_id) REFERENCES public.tbl_test_method(test_id);
+
+
+--
+-- TOC entry 5086 (class 2606 OID 24467)
+-- Name: tbl_test_result tbl_test_result_tested_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_test_result
+    ADD CONSTRAINT tbl_test_result_tested_by_fkey FOREIGN KEY (tested_by) REFERENCES public.tbl_app_user(username);
+
+
+--
+-- TOC entry 5099 (class 2606 OID 24606)
+-- Name: tbl_thermotherapy_detail tbl_thermotherapy_detail_sample_code_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_thermotherapy_detail
+    ADD CONSTRAINT tbl_thermotherapy_detail_sample_code_fkey FOREIGN KEY (sample_code) REFERENCES public.tbl_sample(sample_code) ON DELETE CASCADE;
+
+
+--
+-- TOC entry 5043 (class 2606 OID 24027)
+-- Name: tbl_variety tbl_variety_crop_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tbl_variety
+    ADD CONSTRAINT tbl_variety_crop_id_fkey FOREIGN KEY (crop_id) REFERENCES public.tbl_crop(crop_id) ON UPDATE CASCADE;
+
+
+-- Completed on 2026-07-17 19:46:59 EAT
+
+--
+-- PostgreSQL database dump complete
+--
+
+\unrestrict COOrN7IE1x4UcqgITIfqWCgk7KdzJTi6yoRqdV0Mqq0Qib1iOYxQYGrvXZIOk6c
+

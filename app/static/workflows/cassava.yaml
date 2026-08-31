@@ -1,0 +1,717 @@
+workflow_code: cassava
+label: Clonal Crop Diagnostics & Cleaning Workflow
+description: Standardized processing for Cassava and general clonal samples
+# ============================================================================
+# RECONCILED against the KEPHIS Partnership Framework (25 Mar 2024), p4
+# "Overall Generic Workflow", and the seeded vocabulary in 002_seed.sql.
+#
+# Four block kinds (see fct_workflows.R header for the full contract):
+#   then:    one destination, unconditional.
+#   rules:   first match wins; default: is the fallback. Engine picks ONE.
+#   fan_out: every match applies AT ONCE (and). The order splits.
+#   choice:  every match is OFFERED (or). The operator picks exactly one,
+#            and neither pick is an off-workflow override.
+#
+# Design decisions carried from the reconciliation:
+#  * Reception uses choice: cutting->glasshouse, in_vitro->growthroom (ALL
+#    crops), plus a cassava-only express lane straight to thermotherapy.
+#    Both the normal bench and the express lane are standard, so choice, not
+#    rules (which would make one an override).
+#  * seed, tuber, plantlet sample types have no diagram bench; they fall to
+#    growthroom via the `default`-style catch-all entry (a choice entry with
+#    no when: always matches). Confirm this catch-all with the lab.
+#  * Two indexing stages EXIST in the seed - molecular and grafting - as
+#    separate stages sharing an identical state machine. The normal exit goes
+#    to molecular (the common path, and what 006_smoke_test exercises); an
+#    explicit grafting exit is offered too so the seeded stage is reachable.
+#  * Thermotherapy on the NORMAL route is positive-index-gated. It is also
+#    reachable directly from reception (the express lane) and after a rejected
+#    result. All three entrances are legitimate.
+#  * meristem_culture/completed re-indexes (edge kept, per lab confirmation) -
+#    this is the loop that made virus_indexing per-sample and non-monotonic;
+#    see order_context() and view_sample_virus_status.
+#  * needs_cleaning gates indexing/completed so a diagnostic-only order
+#    (pathogen_detection with no fulfilment service) finishes at indexing
+#    instead of being pushed down the cleaning line forever.
+# ============================================================================
+nodes:
+
+# ---- RECEPTION -------------------------------------------------------------
+- stage: reception
+  state: logged
+  label: Order logged
+  then:
+    to_stage: reception
+    step: review
+    label: Review Order
+- stage: reception
+  state: approved
+  label: Order approved
+  # ONE bench per consignment. `choice:` offers every matching branch, so each
+  # branch below must be mutually exclusive by sample_type - otherwise two
+  # benches are recommended at once and the operator has to guess.
+  #
+  # The rule, from the lab:
+  #   in_vitro        -> growthroom, and ONLY growthroom. Material already in
+  #                      culture is not put on a glasshouse bench, and it does
+  #                      not go straight to heat treatment either.
+  #   everything else -> glasshouse, plus thermotherapy when the crop is
+  #                      cassava (the express lane).
+  #
+  # Note there is no negation in `when:` - match_when() is set membership only.
+  # "not in_vitro" therefore has to be written as the explicit list of the
+  # other sample types, which is why cutting/seed/tuber/plantlet is repeated on
+  # the thermotherapy branch. If a new sample type is added to tbl_sample_type
+  # it will match NONE of the guarded branches and fall to the default below -
+  # growthroom, the conservative bench. That is deliberate: a new type should
+  # not silently acquire a glasshouse or thermotherapy route.
+  choice:
+  - to_stage: quarantine_glasshouse
+    step: establish
+    label: Establish in Quarantine Glasshouse
+    when:
+      sample_type:
+      - cutting
+      - seed
+      - tuber
+      - plantlet
+  - to_stage: quarantine_growthroom
+    step: establish
+    label: Receive in Quarantine Growthroom
+    when:
+      sample_type:
+      - in_vitro
+  - to_stage: thermotherapy
+    step: initiate
+    label: Direct to Thermotherapy (cassava)
+    # Gated on crop AND sample_type. The crop gate alone offered thermotherapy
+    # to in_vitro cassava, which the in_vitro-only rule forbids.
+    when:
+      crop:
+      - cassava
+      sample_type:
+      - cutting
+      - seed
+      - tuber
+      - plantlet
+  - to_stage: quarantine_growthroom
+    step: establish
+    label: Receive in Quarantine Growthroom
+    # `default: true` is REQUIRED here, not decorative. Without it this branch
+    # carries no `when:`, matches unconditionally, and is offered next to every
+    # other branch - which is precisely the defect this node had. Marked
+    # default, it fires only when nothing above matched.
+    default: true
+- stage: reception
+  state: rejected
+  label: Order rejected
+  then:
+    to_stage: reception
+    step: review
+    label: Review Order
+
+# ---- QUARANTINE (symmetric: establish -> review -> approve -> index) --------
+- stage: quarantine_glasshouse
+  state: transferred
+  label: Transferred to Quarantine Glasshouse
+  then:
+    to_stage: quarantine_glasshouse
+    step: establish
+    label: Establish in Glasshouse Quarantine
+- stage: quarantine_glasshouse
+  state: established
+  label: Established in Glasshouse Quarantine
+  then:
+    to_stage: quarantine_glasshouse
+    step: review
+    label: Review Glasshouse Quarantine
+- stage: quarantine_glasshouse
+  state: approved
+  label: Glasshouse Quarantine Approved
+  # Indexing method is determined by CROP, not by operator choice:
+  # potato is virus-indexed by grafting, every other crop by molecular
+  # diagnostics. Automatic, so no one has to pick. crop is matched
+  # case-insensitively; the admin-managed crop_name must read 'potato'
+  # (any case) for the grafting branch - see the naming convention note.
+  rules:
+  - to_stage: grafting_virus_indexing
+    step: initiate
+    label: Initiate Grafting Virus Indexing
+    when:
+      crop:
+      - potato
+  - to_stage: molecular_virus_indexing
+    step: initiate
+    label: Initiate Molecular Virus Indexing
+    default: true
+- stage: quarantine_glasshouse
+  state: rejected
+  label: Glasshouse Quarantine Rejected
+  then:
+    to_stage: quarantine_glasshouse
+    step: review
+    label: Review Glasshouse Quarantine
+
+- stage: quarantine_growthroom
+  state: transferred
+  label: Transferred to Quarantine Growthroom
+  then:
+    to_stage: quarantine_growthroom
+    step: establish
+    label: Receive in Growthroom Quarantine
+- stage: quarantine_growthroom
+  state: received
+  label: Received in Quarantine Growthroom
+  then:
+    to_stage: quarantine_growthroom
+    step: review
+    label: Review Growthroom Quarantine
+- stage: quarantine_growthroom
+  state: approved
+  label: Growthroom Quarantine Approved
+  # potato -> grafting, all other crops -> molecular (see glasshouse note)
+  rules:
+  - to_stage: grafting_virus_indexing
+    step: initiate
+    label: Initiate Grafting Virus Indexing
+    when:
+      crop:
+      - potato
+  - to_stage: molecular_virus_indexing
+    step: initiate
+    label: Initiate Molecular Virus Indexing
+    default: true
+- stage: quarantine_growthroom
+  state: rejected
+  label: Growthroom Quarantine Rejected
+  then:
+    to_stage: quarantine_growthroom
+    step: review
+    label: Review Growthroom Quarantine
+
+# ---- MOLECULAR VIRUS INDEXING ---------------------------------------------
+- stage: molecular_virus_indexing
+  state: inprogress
+  label: Molecular Virus Indexing in Progress
+  then:
+    to_stage: molecular_virus_indexing
+    step: upload_results
+    label: Upload Indexing Results
+- stage: molecular_virus_indexing
+  state: results_available
+  label: Molecular Indexing Results Available
+  then:
+    to_stage: molecular_virus_indexing
+    step: review
+    label: Review Indexing Results
+- stage: molecular_virus_indexing
+  state: approved
+  label: Molecular Indexing Approved
+  then:
+    to_stage: molecular_virus_indexing
+    step: finalize
+    label: Finalize Molecular Indexing
+- stage: molecular_virus_indexing
+  state: rejected
+  label: Molecular Indexing Rejected
+  then:
+    to_stage: molecular_virus_indexing
+    step: repeat
+    label: Repeat Molecular Indexing
+- stage: molecular_virus_indexing
+  state: completed
+  label: Molecular Indexing Completed
+  # Routing after indexing is decided by the RESULT, and by nothing else.
+  #
+  #   any test positive  -> thermotherapy       (clean the material up)
+  #   all tests negative -> surface_sterilization
+  #
+  # These are first-match-wins, so the positive rule must stay above the
+  # negative one. virus_indexing comes from sample_context(), which reads
+  # view_sample_virus_status for the SOURCE - that view is keyed on
+  # parent_sample_code, so it rolls up every test cut from that source, which
+  # is exactly the "were they ALL negative" question.
+  #
+  # CHANGED: both branches used to require needs_cleaning = 'yes' as well.
+  # needs_cleaning is true only when the order asked for a FULFILMENT service
+  # (subculture, conservation, distribution) rather than diagnostics alone, so
+  # a diagnostic-only order fell past both rules to tracking_complete and was
+  # never routed anywhere. Removing that gate is what makes the rule read as
+  # the lab states it. The trade is real and worth knowing: a customer who
+  # ordered a test and nothing else will now have their material routed into a
+  # cleaning stage. If that is unwanted, put needs_cleaning back on the
+  # surface_sterilization branch only - a positive result arguably needs
+  # cleaning whoever asked for it.
+  rules:
+  - to_stage: thermotherapy
+    step: initiate
+    label: Initiate Thermotherapy
+    when:
+      virus_indexing:
+      - positive
+  - to_stage: surface_sterilization
+    step: initiate
+    label: Initiate Surface Sterilization
+    when:
+      virus_indexing:
+      - negative
+  - to_stage: tracking_complete
+    step: finalize
+    label: Finalize Pathogen Detection
+    default: true
+
+# ---- GRAFTING VIRUS INDEXING (seeded stage, now reachable) -----------------
+- stage: grafting_virus_indexing
+  state: inprogress
+  label: Grafting Virus Indexing in Progress
+  then:
+    to_stage: grafting_virus_indexing
+    step: upload_results
+    label: Upload Indexing Results
+- stage: grafting_virus_indexing
+  state: results_available
+  label: Grafting Indexing Results Available
+  then:
+    to_stage: grafting_virus_indexing
+    step: review
+    label: Review Indexing Results
+- stage: grafting_virus_indexing
+  state: approved
+  label: Grafting Indexing Approved
+  then:
+    to_stage: grafting_virus_indexing
+    step: finalize
+    label: Finalize Grafting Indexing
+- stage: grafting_virus_indexing
+  state: rejected
+  label: Grafting Indexing Rejected
+  then:
+    to_stage: grafting_virus_indexing
+    step: repeat
+    label: Repeat Grafting Indexing
+- stage: grafting_virus_indexing
+  state: completed
+  label: Grafting Indexing Completed
+  # Routing after indexing is decided by the RESULT, and by nothing else.
+  #
+  #   any test positive  -> thermotherapy       (clean the material up)
+  #   all tests negative -> surface_sterilization
+  #
+  # These are first-match-wins, so the positive rule must stay above the
+  # negative one. virus_indexing comes from sample_context(), which reads
+  # view_sample_virus_status for the SOURCE - that view is keyed on
+  # parent_sample_code, so it rolls up every test cut from that source, which
+  # is exactly the "were they ALL negative" question.
+  #
+  # CHANGED: both branches used to require needs_cleaning = 'yes' as well.
+  # needs_cleaning is true only when the order asked for a FULFILMENT service
+  # (subculture, conservation, distribution) rather than diagnostics alone, so
+  # a diagnostic-only order fell past both rules to tracking_complete and was
+  # never routed anywhere. Removing that gate is what makes the rule read as
+  # the lab states it. The trade is real and worth knowing: a customer who
+  # ordered a test and nothing else will now have their material routed into a
+  # cleaning stage. If that is unwanted, put needs_cleaning back on the
+  # surface_sterilization branch only - a positive result arguably needs
+  # cleaning whoever asked for it.
+  rules:
+  - to_stage: thermotherapy
+    step: initiate
+    label: Initiate Thermotherapy
+    when:
+      virus_indexing:
+      - positive
+  - to_stage: surface_sterilization
+    step: initiate
+    label: Initiate Surface Sterilization
+    when:
+      virus_indexing:
+      - negative
+  - to_stage: tracking_complete
+    step: finalize
+    label: Finalize Pathogen Detection
+    default: true
+
+# ---- THERMOTHERAPY ---------------------------------------------------------
+- stage: thermotherapy
+  state: inprogress
+  label: Thermotherapy in Progress
+  then:
+    to_stage: thermotherapy
+    step: update
+    label: Update Thermotherapy
+- stage: thermotherapy
+  state: updated
+  label: Thermotherapy Updated
+  then:
+    to_stage: thermotherapy
+    step: review
+    label: Review Thermotherapy
+- stage: thermotherapy
+  state: rejected
+  label: Thermotherapy Rejected
+  then:
+    to_stage: thermotherapy
+    step: initiate
+    label: Restart Thermotherapy
+- stage: thermotherapy
+  state: completed
+  label: Thermotherapy Completed
+  then:
+    to_stage: thermotherapy
+    step: review
+    label: Review Thermotherapy
+- stage: thermotherapy
+  state: approved
+  label: Thermotherapy Approved
+  then:
+    to_stage: meristem_culture
+    step: push
+    label: Push to Meristem Culture
+
+# ---- MERISTEM CULTURE (re-indexes on completion) ---------------------------
+- stage: meristem_culture
+  state: received
+  label: Meristem Culture Received
+  then:
+    to_stage: meristem_culture
+    step: receive
+    label: Receive into Meristem Culture
+- stage: meristem_culture
+  state: established
+  label: Meristem Culture Established
+  then:
+    to_stage: meristem_culture
+    step: update
+    label: Update Meristem Culture
+- stage: meristem_culture
+  state: updated
+  label: Meristem Culture Updated
+  then:
+    to_stage: meristem_culture
+    step: review
+    label: Review Meristem Culture
+- stage: meristem_culture
+  state: rejected
+  label: Meristem Culture Rejected
+  then:
+    to_stage: meristem_culture
+    step: initiate
+    label: Restart Meristem Culture
+- stage: meristem_culture
+  state: approved
+  label: Meristem Culture Approved
+  # Approved, not yet finished. Review clears the tip; completing it is the
+  # separate act that ends the culture and makes the tissue available.
+  then:
+    to_stage: meristem_culture
+    step: complete
+    label: Complete Meristem Culture
+- stage: meristem_culture
+  state: completed
+  label: Meristem Culture Completed
+  # Completed is the EXIT gate. A tip is cleared for onward work only once its
+  # culture is finished, so approval alone does not release it.
+  #
+  # WHERE it goes depends on whether the cleaning worked. A tip whose lineage
+  # has since cleared every test its order requires is finished with diagnosis
+  # and goes to surface sterilization; one still carrying an outstanding or
+  # positive test goes back for re-indexing, by grafting for potato and
+  # molecularly for everything else, so a cleaned potato does not switch
+  # indexing method on the way back.
+  #
+  # `lineage_clear`, not `virus_indexing`: the latter reports the absence of a
+  # positive and so reads negative for tissue nobody has tested yet, which
+  # would send untested material straight to sterilization.
+  rules:
+  - to_stage: surface_sterilization
+    step: initiate
+    label: Initiate Surface Sterilization
+    when:
+      lineage_clear:
+      - clear
+  - to_stage: grafting_virus_indexing
+    step: push
+    label: Push to Re-indexing
+    when:
+      crop:
+      - potato
+  - to_stage: molecular_virus_indexing
+    step: push
+    label: Push to Re-indexing
+    default: true
+
+# ---- SURFACE STERILIZATION -------------------------------------------------
+- stage: surface_sterilization
+  state: established
+  label: Surface Sterilization in Progress
+  then:
+    to_stage: surface_sterilization
+    step: update
+    label: Update Surface Sterilization
+- stage: surface_sterilization
+  state: healthy
+  label: Surface Sterilization Healthy
+  then:
+    to_stage: surface_sterilization
+    step: review
+    label: Review Surface Sterilization
+- stage: surface_sterilization
+  state: updated
+  label: Surface Sterilization Updated
+  then:
+    to_stage: surface_sterilization
+    step: review
+    label: Review Surface Sterilization
+- stage: surface_sterilization
+  state: contaminated
+  label: Surface Sterilization Contaminated
+  then:
+    to_stage: surface_sterilization
+    step: review
+    label: Review Surface Sterilization
+- stage: surface_sterilization
+  state: dead
+  label: Surface Sterilization Dead
+  then:
+    to_stage: surface_sterilization
+    step: review
+    label: Review Surface Sterilization
+- stage: surface_sterilization
+  state: depleted
+  label: Surface Sterilization Depleted
+  then:
+    to_stage: surface_sterilization
+    step: restart
+    label: Restart Surface Sterilization
+- stage: surface_sterilization
+  state: rejected
+  label: Surface Sterilization Rejected
+  then:
+    to_stage: surface_sterilization
+    step: repeat
+    label: Repeat Surface Sterilization
+- stage: surface_sterilization
+  state: completed
+  label: Surface Sterilization Completed
+  then:
+    to_stage: subculture
+    step: initiate
+    label: Initiate Subculture / Multiplication
+
+# ---- SUBCULTURE (fan_out to conservation / distribution / hardening) -------
+- stage: subculture
+  state: established
+  label: Subculture Established
+  then:
+    to_stage: subculture
+    step: update
+    label: Update Subculture
+- stage: subculture
+  state: updated
+  label: Subculture Updated
+  then:
+    to_stage: subculture
+    step: review
+    label: Review Subculture
+- stage: subculture
+  state: rejected
+  label: Subculture Rejected
+  then:
+    to_stage: subculture
+    step: repeat
+    label: Repeat Subculture
+- stage: subculture
+  state: completed
+  label: Subculture Completed
+  fan_out:
+  - to_stage: in_vitro_conservation
+    step: initiate
+    label: Initiate In Vitro Conservation
+    when:
+      service:
+      - in_vitro_conservation
+      - cold_room
+  - to_stage: in_vitro_distribution
+    step: initiate
+    label: Initiate In Vitro Distribution
+    when:
+      service:
+      - in_vitro_distribution
+      - plantlets_distribution
+  - to_stage: hardening
+    step: initiate
+    label: Initiate Hardening
+    when:
+      service:
+      - in_vivo_conservation
+      - mini_tuber_distribution
+      - vines_distribution
+
+# ---- IN VITRO CONSERVATION -------------------------------------------------
+- stage: in_vitro_conservation
+  state: established
+  label: In Vitro Conservation Established
+  then:
+    to_stage: in_vitro_conservation
+    step: update
+    label: Update In Vitro Conservation
+- stage: in_vitro_conservation
+  state: updated
+  label: In Vitro Conservation Updated
+  then:
+    to_stage: in_vitro_conservation
+    step: review
+    label: Review In Vitro Conservation
+- stage: in_vitro_conservation
+  state: rejected
+  label: In Vitro Conservation Rejected
+  then:
+    to_stage: in_vitro_conservation
+    step: repeat
+    label: Repeat In Vitro Conservation
+- stage: in_vitro_conservation
+  state: completed
+  label: In Vitro Conservation Completed
+  then:
+    to_stage: tracking_complete
+    step: finalize
+    label: Finalize In Vitro Conservation
+
+# ---- IN VITRO DISTRIBUTION -------------------------------------------------
+- stage: in_vitro_distribution
+  state: established
+  label: In Vitro Distribution Established
+  then:
+    to_stage: in_vitro_distribution
+    step: update
+    label: Update In Vitro Distribution
+- stage: in_vitro_distribution
+  state: updated
+  label: In Vitro Distribution Updated
+  then:
+    to_stage: in_vitro_distribution
+    step: review
+    label: Review In Vitro Distribution
+- stage: in_vitro_distribution
+  state: rejected
+  label: In Vitro Distribution Rejected
+  then:
+    to_stage: in_vitro_distribution
+    step: repeat
+    label: Repeat In Vitro Distribution
+- stage: in_vitro_distribution
+  state: completed
+  label: In Vitro Distribution Completed
+  then:
+    to_stage: tracking_complete
+    step: finalize
+    label: Finalize In Vitro Distribution
+
+# ---- HARDENING (rules: to in_vivo conservation or mini-tuber distribution) --
+- stage: hardening
+  state: established
+  label: Hardening Established
+  then:
+    to_stage: hardening
+    step: update
+    label: Update Hardening
+- stage: hardening
+  state: updated
+  label: Hardening Updated
+  then:
+    to_stage: hardening
+    step: review
+    label: Review Hardening
+- stage: hardening
+  state: rejected
+  label: Hardening Rejected
+  then:
+    to_stage: hardening
+    step: repeat
+    label: Repeat Hardening
+- stage: hardening
+  state: completed
+  label: Hardening Completed
+  fan_out:
+  - to_stage: in_vivo_conservation
+    step: initiate
+    label: Initiate In Vivo Conservation
+    when:
+      service:
+      - in_vivo_conservation
+  - to_stage: mini_tubers_distribution
+    step: initiate
+    label: Initiate Mini-tubers Distribution
+    when:
+      service:
+      - mini_tuber_distribution
+      - vines_distribution
+
+# ---- IN VIVO CONSERVATION --------------------------------------------------
+- stage: in_vivo_conservation
+  state: established
+  label: In Vivo Conservation Established
+  then:
+    to_stage: in_vivo_conservation
+    step: update
+    label: Update In Vivo Conservation
+- stage: in_vivo_conservation
+  state: updated
+  label: In Vivo Conservation Updated
+  then:
+    to_stage: in_vivo_conservation
+    step: review
+    label: Review In Vivo Conservation
+- stage: in_vivo_conservation
+  state: rejected
+  label: In Vivo Conservation Rejected
+  then:
+    to_stage: in_vivo_conservation
+    step: repeat
+    label: Repeat In Vivo Conservation
+- stage: in_vivo_conservation
+  state: completed
+  label: In Vivo Conservation Completed
+  then:
+    to_stage: tracking_complete
+    step: finalize
+    label: Finalize In Vivo Conservation
+
+# ---- MINI-TUBERS DISTRIBUTION ----------------------------------------------
+- stage: mini_tubers_distribution
+  state: established
+  label: Mini-tubers Distribution Established
+  then:
+    to_stage: mini_tubers_distribution
+    step: update
+    label: Update Mini-tubers Distribution
+- stage: mini_tubers_distribution
+  state: updated
+  label: Mini-tubers Distribution Updated
+  then:
+    to_stage: mini_tubers_distribution
+    step: review
+    label: Review Mini-tubers Distribution
+- stage: mini_tubers_distribution
+  state: rejected
+  label: Mini-tubers Distribution Rejected
+  then:
+    to_stage: mini_tubers_distribution
+    step: repeat
+    label: Repeat Mini-tubers Distribution
+- stage: mini_tubers_distribution
+  state: completed
+  label: Mini-tubers Distribution Completed
+  then:
+    to_stage: tracking_complete
+    step: finalize
+    label: Finalize Mini-tubers Distribution
+
+# ---- TERMINAL --------------------------------------------------------------
+- stage: tracking_complete
+  state: completed
+  label: Workflow Finished
+  then:
+    to_stage: archived
+    step: archive
+    label: Archive Record

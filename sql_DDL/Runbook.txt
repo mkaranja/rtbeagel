@@ -1,0 +1,8 @@
+createdb rtbeagel
+
+psql -d rtbeagel -v ON_ERROR_STOP=1 -f 001_core.sql
+psql -d rtbeagel -v ON_ERROR_STOP=1 -f 002_seed.sql
+psql -d rtbeagel -v ON_ERROR_STOP=1 -f 003_stages.sql
+psql -d rtbeagel -v ON_ERROR_STOP=1 -f 004_reporting.sql
+
+psql -d rtbeagel -v ON_ERROR_STOP=1 -f 005_smoke_test.sql   # proves it, leaves nothing
