@@ -16,7 +16,9 @@ app/uploaded_files/
 # --- R session junk --------------------------------------------------
 .Rproj.user/
 .Rhistory
+.Rapp.history
 .RData
+.RDataTmp
 .Ruserdata
 rsconnect/
 
@@ -24,3 +26,14 @@ rsconnect/
 renv/library/
 renv/staging/
 renv/local/
+
+# --- R package build/check artifacts (not applicable to this app, kept
+#     for safety in case anything ever runs R CMD build/check here) ----
+*-Ex.R
+/*.tar.gz
+/*.Rcheck/
+*_cache/
+/cache/
+*.utf8.md
+*.knit.md
+.httr-oauth
