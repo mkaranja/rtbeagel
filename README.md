@@ -1,2 +1,2 @@
-# rtbeagel
-RTB-EAGEL Data Management System
+# RTB-EAGEL
+RTB-EAGEL KEPHIS Laboratory Data Management System
